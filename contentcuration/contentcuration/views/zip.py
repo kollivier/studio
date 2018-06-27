@@ -119,6 +119,5 @@ class ZipContentView(View):
         # restrict CSP to only allow resources to be loaded from the Studio host, to prevent info leakage
         # (e.g. via passing user info out as GET parameters to an attacker's server), or inadvertent data usage
         host = request.build_absolute_uri('/').strip("/")
-        response["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: " + host
-
+        response["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: " + host
         return response
