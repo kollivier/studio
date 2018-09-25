@@ -1,8 +1,9 @@
 import sys
 # TODO: Investigate more precise timing libraries
 import time
+import uuid
 
-from contentcuration.models import ContentKind, ContentNode, File
+from contentcuration.models import ChannelTreeNode, ContentKind, ContentNode, File
 
 def print_progress(text):
     sys.stdout.write("\r" + text)
@@ -64,6 +65,42 @@ class Objective:
         assert ContentNode.objects.count() == current_nodes + num_nodes
         return elapsed
 
+    def create_treeless_content_nodes(self, num_nodes=100):
+        current_nodes = ContentNode.objects.count()
+        parent = None
+
+        elapsed = 0
+        with ContentNode.objects.disable_mptt_updates():
+            start = time.time()
+            for i in range(num_nodes):
+                node = ContentNode.objects.create(title="test_server_perf Treeless Node {}".format(i),
+                                              kind=self.topic)
+                if num_nodes > 20:
+                    if i % (num_nodes / 10) == 0:
+                        sys.stdout.write('.')
+                        sys.stdout.flush()
+
+            elapsed = time.time() - start
+            assert ContentNode.objects.count() == current_nodes + num_nodes
+        return elapsed
+
+    def create_child_nodes_with_content(self, parent, max_level, level, num_children=5):
+        for i in range(num_children):
+            node = ContentNode.objects.create(title=uuid.uuid4(), kind=self.topic)
+            child = parent.add_child(sort_order=i, content_node=node)
+            if level < max_level:
+                self.create_child_nodes_with_content(child, max_level, level+1)
+
+    def create_mptree(self, num_children=5, num_levels=5):
+        with ContentNode.objects.disable_mptt_updates():
+            start = time.time()
+            content_node = ContentNode.objects.create(title="MP Tree Root", kind=self.topic)
+            tree = ChannelTreeNode.add_root(sort_order=0, content_node=content_node)
+            self.create_child_nodes_with_content(tree, max_level=num_levels, level=1, num_children=num_children)
+            elapsed = time.time() - start
+
+        return elapsed
+
     def create_files(self, num_files=100):
         """
         Create File database objects.
@@ -116,9 +153,41 @@ class Objective:
         for i in range(num_runs):
             print_progress("Creating {} {} objects with delay_mptt_updates. Test run {} of {}".format(num_objects, 'ContentNode', i+1, num_runs))
             with ContentNode.objects.delay_mptt_updates():
-                run_times.append(self.create_content_nodes(num_objects))
+                run_times.append(self.create_treeless_content_nodes(num_objects))
 
         return self._calc_stats(run_times, num_objects)
+
+    def get_object_creation_stats_treeless(self, num_objects=100, num_runs=10):
+        """
+        Creates the specified number of ContentNode objects within a dleay_mptt_updates block, and returns the time taken.
+
+        :param num_nodes: Number of nodes to create each run
+        :param num_runs: Number of time to run the function
+        :return: A dictionary with keys 'min', 'max', 'average', representing reported times.
+        """
+        run_times = []
+
+        for i in range(num_runs):
+            print_progress("Creating {} {} treeless objects. Test run {} of {}".format(num_objects, 'ContentNode', i+1, num_runs))
+            run_times.append(self.create_treeless_content_nodes(num_objects))
+
+        return self._calc_stats(run_times, num_objects)
+
+    def get_mptree_creation_stats(self, num_levels=5, num_children=5, num_runs=10):
+        """
+        Creates the specified number of ContentNode objects within a dleay_mptt_updates block, and returns the time taken.
+
+        :param num_nodes: Number of nodes to create each run
+        :param num_runs: Number of time to run the function
+        :return: A dictionary with keys 'min', 'max', 'average', representing reported times.
+        """
+        run_times = []
+
+        for i in range(num_runs):
+            print_progress("Creating {} level MP tree with content nodes. Test run {} of {}".format(num_levels, i+1, num_runs))
+            run_times.append(self.create_mptree(num_levels, num_children))
+
+        return self._calc_stats(run_times, num_levels ** num_children)
 
     def get_large_channel_creation_stats(self):
         # Let's use the stats from KA as a base
@@ -139,6 +208,7 @@ class Objective:
         average = total_time / len(run_times)
 
         return {
+            'items_created': num_items,
             'min': run_times[0],
             'max': run_times[-1],
             'average': average,

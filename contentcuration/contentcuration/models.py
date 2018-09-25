@@ -31,6 +31,8 @@ from le_utils.constants import (content_kinds, exercises, file_formats, licenses
 from mptt.models import (MPTTModel, TreeForeignKey, TreeManager,
                          raise_if_unsaved)
 
+from treebeard.mp_tree import MP_Node
+
 from pg_utils import DistinctSum
 
 from contentcuration.statistics import record_channel_stats
@@ -409,6 +411,56 @@ class SecretToken(models.Model):
         return self.token
 
 
+class ChannelTree(models.Model):
+    """
+    A ChannelTree represents any number of trees that may belong to a channel. This structure allows for multiple
+    versions of a tree for the channel. Here's how this design maps to the previous channel trees:
+
+    staging_tree = MAX(version) WHERE published = False
+    main_tree    = MAX(version) WHERE published = True
+    chef_tree    = MAX(version) WHERE read_only = True AND published = False
+    trash_tree   = None <-- Still need to work this one out, feels like it should be a list of nodes with tree position
+
+    New functionality:
+    - Trees < MAX(version) can be viewed and referred to if deleted = False
+    - Chef trees are read only in Studio, even after publish, but can be cloned / forked to make them writable
+    - Published channels become read-only. To make changes, users will need to first click on a "New Version" button
+    """
+
+    id = UUIDField(primary_key=True, default=uuid.uuid4)
+
+    channel = models.ForeignKey('Channel', related_name='trees')
+    tree_root = models.ForeignKey('ChannelTreeNode', related_name='channel_tree')
+    version = models.IntegerField(default=0)
+
+    read_only = models.BooleanField(default=False)
+    published = models.BooleanField(default=False)
+    deleted = models.BooleanField(default=False)
+    public = models.BooleanField(default=False)
+
+    @classmethod
+    def load_channel_tree(self, channel, data, from_chef=False):
+        """
+        Loads channel tree using JSON data in the format specified in:
+        https://django-treebeard.readthedocs.io/en/latest/api.html#treebeard.models.Node.load_bulk
+
+        :param channel: The channel to which the new tree will belong.
+        :param data: JSON data using the format specified above.
+        :param from_chef: Whether or not this is being triggered by a cheffing operation.
+        :return: The newly-created ChannelTree ORM object. An exception will be thrown on failure.
+        """
+
+        # this code cannot be run concurrently, but we should not be creating new channel trees in bulk
+        # so I don't think this needs to be made to support concurrent operations
+        version = 1
+        channel_trees = ChannelTree.objects.filter(channel=channel)
+        if channel_trees:
+            version = channel_trees.aggregate(Max('version'))
+
+        root_node = ChannelTreeNode.load_bulk(data)[0]
+        return ChannelTree.objects.create(channel=channel, tree_root=root_node, version=version, read_only=from_chef)
+
+
 class Channel(models.Model):
     """ Permissions come from association with organizations """
     id = UUIDField(primary_key=True, default=uuid.uuid4)
@@ -693,6 +745,18 @@ class License(models.Model):
     def __str__(self):
         return self.license_name
 
+
+class ChannelTreeNode(MP_Node):
+    sort_order = models.FloatField(max_length=50, default=1, verbose_name=_("sort order"),
+                                   help_text=_("Ascending, lowest number shown first"))
+    content_node = models.ForeignKey('ContentNode')
+
+    node_order_by = ['sort_order']
+
+    def get_content(self):
+        return self.content_node
+
+
 def get_next_sort_order(node=None):
     # Get the next sort order under parent (roots if None)
     # Based on Kevin's findings, we want to append node as prepending causes all other root sort_orders to get incremented
@@ -898,7 +962,7 @@ class ContentNode(MPTTModel, models.Model):
         except (ObjectDoesNotExist, MultipleObjectsReturned, AttributeError):
             return None
 
-    def save(self, *args, **kwargs):
+    def save_slow(self, *args, **kwargs):
         channel_id = None
         if kwargs.get('request'):
             request = kwargs.pop('request')
@@ -947,6 +1011,9 @@ class ContentNode(MPTTModel, models.Model):
                 PrerequisiteContentRelationship.objects.filter(Q(prerequisite_id=self.id) | Q(target_node_id=self.id)).delete()
         except (ContentNode.DoesNotExist, MultipleObjectsReturned) as e:
             logging.warn(str(e))
+
+    def get_content(self):
+        return self  # if we're an MPTT tree, tree and node are in the same place
 
     class MPTTMeta:
         order_insertion_by = ['sort_order']

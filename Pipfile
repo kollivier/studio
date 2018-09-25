@@ -57,6 +57,7 @@ gspread = "==3.0.1"
 google-api-python-client = "==1.6.4"
 django-db-readonly = "==0.5.0"
 raven = "*"
+django-treebeard = "*"
 
 [dev-packages]
 python-language-server = "*"

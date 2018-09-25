@@ -5,6 +5,7 @@ import os
 import random
 import string
 import tempfile
+import uuid
 from cStringIO import StringIO
 
 import pytest
@@ -99,12 +100,28 @@ def fileobj_video(contents=None):
 
 
 def node_json(data):
+    title = "Recipes"
+    node_id = str(uuid.uuid4())
+    content_id = str(uuid.uuid4())
+    description = "Recipes for various dishes."
+    author = "Bradley Smoker"
+    if 'title' in data:
+        title = data['title']
+    if 'node_id' in data:
+        node_id = data['node_id']
+    if 'content_id' in data:
+        content_id = data['content_id']
+    if 'description' in data:
+        description = data['description']
+    if 'author' in data:
+        author = data['author']
+
     node_data = {
-        "title": "Recipes",
-        "node_id": "acedacedacedacedacedacedacedaced",
-        "content_id": "aa480b60a7f4526f886e7df9f4e9b8cc",
-        "description": "Recipes for various dishes.",
-        "author": "Bradley Smoker",
+        "title": title,
+        "node_id": node_id,
+        "content_id": content_id,
+        "description": description,
+        "author": author,
         "kind": data['kind'],
         "license": data['license'],
         "extra_fields": "",
@@ -113,6 +130,35 @@ def node_json(data):
     }
 
     return node_data
+
+
+def mp_branch_json(node_list, parent=None, num_children=0, sort_order=0, recursive=True):
+    children = []
+
+    content_node = node({'kind_id': 'topic', 'title': uuid.uuid4()}, parent=parent)
+    node_list.append(content_node)
+
+    for i in range(num_children):
+        num_grandchildren = 0
+        if recursive:
+            num_grandchildren = num_children-1
+        children.append(mp_branch_json(node_list, content_node, num_children=num_grandchildren, sort_order=i))
+
+    node = {
+        'data': {
+            'sort_order': sort_order,
+            'source_id': content_node.source_id
+        },
+        'children': children
+    }
+
+    return node
+
+
+def mp_tree_json():
+    node_list = []
+    root = mp_branch_json(node_list, num_children=5)
+    return {'tree': [root], 'content': node_list}
 
 
 def node(data, parent=None):
