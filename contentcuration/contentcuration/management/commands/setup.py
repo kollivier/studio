@@ -6,6 +6,7 @@ import sys
 import tempfile
 import uuid
 
+from django.conf import settings
 from django.core.files import File as DjFile
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
@@ -52,8 +53,9 @@ class Command(BaseCommand):
             print("{} is not a valid email".format(email))
             sys.exit()
 
-        # create the minio bucket
-        ensure_storage_bucket_public()
+        if not settings.DESKTOP_MODE:
+            # create the minio bucket
+            ensure_storage_bucket_public()
 
         # create the cache table
         call_command("createcachetable")

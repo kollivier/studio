@@ -29,7 +29,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STORAGE_ROOT = "storage"
 DB_ROOT = "databases"
 
+DESKTOP_MODE = os.getenv("RUN_MODE") == "desktop"
+
 STATIC_ROOT = os.getenv("STATICFILES_DIR") or os.path.join(BASE_DIR, "contentcuration", "static")
+
 CSV_ROOT = "csvs"
 EXPORT_ROOT = "exports"
 
@@ -194,6 +197,13 @@ DATABASES = {
     },
 }
 
+if DESKTOP_MODE:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': os.path.join(BASE_DIR, 'studio.sqlite3'),
+        }
+    }
 
 DATABASE_ROUTERS = [
     "kolibri_content.router.ContentDBRouter",
@@ -346,18 +356,20 @@ TWO_WEEKS_AGO = datetime.now() - timedelta(days=14)
 ORPHAN_DATE_CLEAN_UP_THRESHOLD = TWO_WEEKS_AGO
 
 # CLOUD STORAGE SETTINGS
-DEFAULT_FILE_STORAGE = 'django_s3_storage.storage.S3Storage'
-AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID') or 'development'
-AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY') or 'development'
-AWS_S3_BUCKET_NAME = os.getenv('AWS_BUCKET_NAME') or 'content'
-AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL') or 'http://localhost:9000'
-AWS_AUTO_CREATE_BUCKET = False
-AWS_S3_FILE_OVERWRITE = True
-AWS_S3_BUCKET_AUTH = False
+if not DESKTOP_MODE:
+    raise Exception("Hey! Studio desktop = {}, run mode = {}".format(DESKTOP_MODE, os.getenv('RUN_MODE')))
+    DEFAULT_FILE_STORAGE = 'django_s3_storage.storage.S3Storage'
+    AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID') or 'development'
+    AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY') or 'development'
+    AWS_S3_BUCKET_NAME = os.getenv('AWS_BUCKET_NAME') or 'content'
+    AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL') or 'http://localhost:9000'
+    AWS_AUTO_CREATE_BUCKET = False
+    AWS_S3_FILE_OVERWRITE = True
+    AWS_S3_BUCKET_AUTH = False
 
-# GOOGLE DRIVE SETTINGS
-GOOGLE_AUTH_JSON = "credentials/client_secret.json"
-GOOGLE_STORAGE_REQUEST_SHEET = "16X6zcFK8FS5t5tFaGpnxbWnWTXP88h4ccpSpPbyLeA8"
+    # GOOGLE DRIVE SETTINGS
+    GOOGLE_AUTH_JSON = "credentials/client_secret.json"
+    GOOGLE_STORAGE_REQUEST_SHEET = "16X6zcFK8FS5t5tFaGpnxbWnWTXP88h4ccpSpPbyLeA8"
 
 # Used as the default parent to collect orphan nodes
 ORPHANAGE_ROOT_ID = "00000000000000000000000000000000"
@@ -367,3 +379,4 @@ ORPHANAGE_ROOT_ID = "00000000000000000000000000000000"
 # so we must be very careful to limit code that touches this tree and to carefully check code that does. If we
 # do choose to implement restore of old chefs, we will need to ensure moving nodes does not cause a tree sort.
 DELETED_CHEFS_ROOT_ID = "11111111111111111111111111111111"
+
