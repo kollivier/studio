@@ -222,10 +222,11 @@ class PolicyAcceptForm(forms.Form):
         fields = ('accepted', 'policy_names')
 
     def save(self, user):
-        user.policies = user.policies or {}
+        policies_obj = user.policies_json or {}
         policies = self.cleaned_data['policy_names'].rstrip(",").split(",")
         for policy in policies:
-            user.policies.update({policy: datetime.datetime.now().strftime("%d/%m/%y %H:%M")})
+            policies_obj.update({policy: datetime.datetime.now().strftime("%d/%m/%y %H:%M")})
+        user.policies_json = policies_obj
         user.save()
         return user
 

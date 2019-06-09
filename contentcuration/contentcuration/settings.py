@@ -25,6 +25,7 @@ logging.getLogger("newrelic").setLevel(logging.CRITICAL)
 logging.getLogger("botocore").setLevel(logging.WARNING)
 logging.getLogger("boto3").setLevel(logging.WARNING)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.getenv("DATA_DIR") or BASE_DIR
 
 STORAGE_ROOT = "storage"
 DB_ROOT = "databases"
@@ -135,6 +136,7 @@ if os.getenv("GCLOUD_ERROR_REPORTING"):
     ) + MIDDLEWARE_CLASSES
 
 SUPPORTED_BROWSERS = [
+    'AppleWebKit',  # user agent for embedded browser (e.g. desktop mode)
     'Chrome',
     'Firefox',
     'Safari',
@@ -201,7 +203,7 @@ if DESKTOP_MODE:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': os.path.join(BASE_DIR, 'studio.sqlite3'),
+            'NAME': os.path.join(DATA_DIR, 'studio.sqlite3'),
         }
     }
 
@@ -342,6 +344,16 @@ CELERY_RESULT_BACKEND = "redis://:{password}@{endpoint}:/{db}".format(
     endpoint=os.getenv("CELERY_RESULT_BACKEND_ENDPOINT") or "localhost:6379",
     db=os.getenv("CELERY_REDIS_DB") or "0"
 ) or CELERY_RESULT_BACKEND
+
+if DESKTOP_MODE:
+    # Note: Even though we update the config in celery.py, these variables must
+    # also be updated for the changes to take effect.
+    CELERY_BROKER_URL = 'filesystem://'
+    results_dir = os.path.join(DATA_DIR, 'celery_broker_results')
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+    CELERY_RESULT_BACKEND = 'file://{}'.format(os.path.abspath(results_dir))
+
 CELERY_TIMEZONE = os.getenv("CELERY_TIMEZONE") or 'Africa/Nairobi'
 CELERY_ACCEPT_CONTENT = ['application/json']
 CELERY_TASK_SERIALIZER = 'json'

@@ -80,8 +80,10 @@ def file_create(request):
 
     presets = FormatPreset.objects.filter(allowed_formats__extension__contains=ext[1:].lower())
     kind = presets.first().kind
-    preferences = json.loads(request.POST.get('content_defaults', None) or "{}")
-
+    content_defaults = json.loads(request.POST.get('content_defaults', None))
+    preferences = {}
+    if content_defaults:
+        preferences = content_defaults
 
     license = License.objects.filter(license_name=preferences.get('license')).first()  # Use filter/first in case preference hasn't been set
     license_id = license.pk if license else None

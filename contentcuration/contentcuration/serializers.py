@@ -6,6 +6,7 @@ from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.storage import default_storage
+from django.db import models
 from django.db import transaction
 from django.db.models import Max
 from django.db.models import Sum
@@ -481,11 +482,11 @@ class ContentNodeFieldMixin(object):
             "providers": filter(lambda x: x, set(split_lst[3])) if len(split_lst) > 3 else [],
         }
 
-    def retrieve_thumbail_src(self, node):
+    def retrieve_thumbnail_src(self, node):
         """ Get either the encoding or the url to use as the <img> src attribute """
         try:
-            if node.thumbnail_encoding:
-                return json.loads(node.thumbnail_encoding).get('base64')
+            if node.thumbnail_encoding_json:
+                return node.thumbnail_encoding_json.get('base64')
         except ValueError:
             pass
 
@@ -524,7 +525,7 @@ class ContentNodeSerializer(SimplifiedContentNodeSerializer, ContentNodeFieldMix
     valid = serializers.SerializerMethodField('check_valid')
     associated_presets = serializers.SerializerMethodField('retrieve_associated_presets')
     original_channel = serializers.SerializerMethodField('retrieve_original_channel')
-    thumbnail_src = serializers.SerializerMethodField('retrieve_thumbail_src')
+    thumbnail_src = serializers.SerializerMethodField('retrieve_thumbnail_src')
     tags = TagSerializer(many=True, read_only=False)
 
     def retrieve_associated_presets(self, node):
@@ -612,6 +613,7 @@ class ContentNodeEditSerializer(ContentNodeSerializer):
     tags = TagSerializer(many=True)
     assessment_items = AssessmentItemSerializer(many=True, read_only=True)
     slideshow_slides = SlideshowSlideSerializer(many=True, read_only=True)
+    thumbnail_encoding = serializers.JSONField(source="thumbnail_encoding_json", allow_null=True, required=False)
 
     class Meta:
         list_serializer_class = CustomListSerializer
@@ -624,6 +626,7 @@ class ContentNodeEditSerializer(ContentNodeSerializer):
 
 
 class ContentNodeCompleteSerializer(ContentNodeEditSerializer):
+    thumbnail_encoding = serializers.JSONField(source="thumbnail_encoding_json", allow_null=True, required=False)
 
     class Meta:
         list_serializer_class = CustomListSerializer
@@ -695,8 +698,8 @@ class ChannelSerializer(ChannelFieldMixin, serializers.ModelSerializer):
     updated = serializers.SerializerMethodField('get_date_updated')
     tags = TagSerializer(many=True, read_only=True)
     primary_token = serializers.SerializerMethodField('get_channel_primary_token')
-    content_defaults = serializers.JSONField()
-    thumbnail_encoding = serializers.JSONField(required=False)
+    content_defaults = serializers.JSONField(source="content_defaults_json")
+    thumbnail_encoding = serializers.JSONField(source="thumbnail_encoding_json", required=False)
 
     def get_date_created(self, channel):
         return channel.main_tree.created.strftime("%X %x")
@@ -732,7 +735,8 @@ class ChannelListSerializer(ChannelFieldMixin, serializers.ModelSerializer):
     created = serializers.SerializerMethodField('get_date_created')
     modified = serializers.SerializerMethodField('get_date_modified')
     primary_token = serializers.SerializerMethodField('get_channel_primary_token')
-    content_defaults = serializers.JSONField()
+    content_defaults = serializers.JSONField(source="content_defaults_json")
+    thumbnail_encoding = serializers.JSONField(source="thumbnail_encoding_json", required=False)
 
     class Meta:
         model = Channel
@@ -751,7 +755,8 @@ class StudioChannelListSerializer(ChannelFieldMixin, serializers.ModelSerializer
     created = serializers.SerializerMethodField('get_date_created')
     modified = serializers.SerializerMethodField('get_date_modified')
     primary_token = serializers.SerializerMethodField('get_channel_primary_token')
-    content_defaults = serializers.JSONField()
+    content_defaults = serializers.JSONField(source="content_defaults_json")
+    thumbnail_encoding = serializers.JSONField(source="thumbnail_encoding_json", required=False)
     secret_tokens = TokenSerializer(many=True, read_only=True)
 
     class Meta:
@@ -788,7 +793,7 @@ class PublicChannelSerializer(ChannelFieldMixin, serializers.ModelSerializer):
         if channel.icon_encoding:
             return channel.icon_encoding
         elif channel.thumbnail_encoding:
-            base64 = channel.thumbnail_encoding.get('base64')
+            base64 = channel.thumbnail_encoding_json.get('base64')
             if base64:
                 return base64
 
@@ -804,7 +809,7 @@ class PublicChannelSerializer(ChannelFieldMixin, serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
-    content_defaults = serializers.JSONField()
+    content_defaults = serializers.JSONField(source="content_defaults_json")
     mb_space = serializers.SerializerMethodField('calculate_space')
 
     def calculate_space(self, user):

@@ -15,6 +15,11 @@ from django.db import models
 import contentcuration.models
 
 
+JSONField = django.contrib.postgres.fields.jsonb.JSONField
+if settings.DESKTOP_MODE:
+    JSONField = models.TextField
+
+
 class Migration(migrations.Migration):
 
     replaces = [(b'contentcuration', '0001_initial'), (b'contentcuration', '0002_language_readable_name'), (b'contentcuration', '0003_user_clipboard_tree'), (b'contentcuration', '0004_auto_20160720_1220'), (b'contentcuration', '0005_auto_20160816_1720'), (b'contentcuration', '0006_contentnode_published'), (b'contentcuration', '0005_formatpreset_thumbnail'), (b'contentcuration', '0007_merge'), (b'contentcuration', '0008_channel_published'), (b'contentcuration', '0009_remove_channel_published'), (b'contentcuration', '0010_auto_20160830_1740'), (b'contentcuration', '0011_file_source_url'), (b'contentcuration', '0012_auto_20160907_1444'), (b'contentcuration', '0013_contentnode_node_id'), (b'contentcuration', '0014_channel_language'), (b'contentcuration', '0015_auto_20160914_1640'), (b'contentcuration', '0016_auto_20160915_1206'), (b'contentcuration', '0015_auto_20160916_1349'), (b'contentcuration', '0017_merge'), (b'contentcuration', '0018_auto_20160919_1533'), (b'contentcuration', '0019_auto_20160919_1559'), (b'contentcuration', '0020_auto_20160919_1617'), (b'contentcuration', '0021_auto_20160919_1620'), (b'contentcuration', '0022_auto_20160920_1119'), (b'contentcuration', '0023_contentnode_extra_fields'), (b'contentcuration', '0024_auto_20160920_1136'), (b'contentcuration', '0025_auto_20160921_1356'), (b'contentcuration', '0026_merge'), (b'contentcuration', '0027_auto_20160926_0945'), (b'contentcuration', '0028_auto_20160926_1527'), (b'contentcuration', '0029_auto_20161005_0933'), (b'contentcuration', '0030_auto_20161005_0935'), (b'contentcuration', '0031_auto_20161010_1143'), (b'contentcuration', '0032_auto_20161010_1202'), (b'contentcuration', '0033_auto_20161012_1344'), (b'contentcuration', '0034_auto_20161014_1509'), (b'contentcuration', '0035_auto_20161018_1438'), (b'contentcuration', '0036_auto_20161018_1536'), (b'contentcuration', '0037_remove_contentnode_author'), (b'contentcuration', '0038_contentnode_author'), (b'contentcuration', '0039_auto_20161101_1555'), (b'contentcuration', '0040_file_assessment_item'), (b'contentcuration', '0041_channel_previous_tree'), (b'contentcuration', '0042_auto_20161206_1641'), (b'contentcuration', '0043_channel_viewers'), (b'contentcuration', '0042_auto_20161205_1622'), (b'contentcuration', '0044_merge'), (b'contentcuration', '0045_invitation_viewonly'), (b'contentcuration', '0046_auto_20161222_1210'), (b'contentcuration', '0042_auto_20161130_1446'), (b'contentcuration', '0043_merge'), (b'contentcuration', '0044_auto_20170119_1033'), (b'contentcuration', '0045_auto_20170119_1429'), (b'contentcuration', '0047_merge'), (b'contentcuration', '0048_auto_20170119_1732'), (b'contentcuration',
@@ -789,7 +794,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='user',
             name='information',
-            field=django.contrib.postgres.fields.jsonb.JSONField(null=True),
+            field=JSONField(null=True),
         ),
         migrations.AlterField(
             model_name='fileformat',
@@ -806,7 +811,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='channel',
             name='content_defaults',
-            field=django.contrib.postgres.fields.jsonb.JSONField(default=dict),
+            field=JSONField(default=dict),
         ),
         migrations.AlterIndexTogether(
             name='channel',
@@ -826,12 +831,12 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='user',
             name='content_defaults',
-            field=django.contrib.postgres.fields.jsonb.JSONField(default=dict),
+            field=JSONField(default=dict),
         ),
         migrations.AddField(
             model_name='user',
             name='policies',
-            field=django.contrib.postgres.fields.jsonb.JSONField(default=dict, null=True),
+            field=JSONField(default=dict, null=True),
         ),
         migrations.AddField(
             model_name='contentnode',

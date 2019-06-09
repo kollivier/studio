@@ -71,6 +71,12 @@ DEFAULT_CONTENT_DEFAULTS = {
 DEFAULT_USER_PREFERENCES = json.dumps(DEFAULT_CONTENT_DEFAULTS, ensure_ascii=False)
 
 
+JSON_DICT_DEFAULT = dict
+if settings.DESKTOP_MODE:
+    JSONField = models.TextField
+    JSON_DICT_DEFAULT = "{}"
+
+
 # Added 7-31-2018. We can remove this once we are certain we have eliminated all cases
 # where root nodes are getting prepended rather than appended to the tree list.
 def _create_tree_space(self, target_tree_id, num_trees=1):
@@ -87,6 +93,25 @@ def _create_tree_space(self, target_tree_id, num_trees=1):
 
 TreeManager._orig_create_tree_space = TreeManager._create_tree_space
 TreeManager._create_tree_space = _create_tree_space
+
+
+def load_from_json(field_value):
+    value = field_value
+    if field_value and isinstance(field_value, basestring):
+        try:
+            value = load_json_string(field_value)
+            if isinstance(value, basestring):
+                value = None
+        except ValueError:
+            value = None
+    return value
+
+
+def convert_to_json(value_obj, force_json_conversion=False):
+    value = value_obj
+    if value and settings.DESKTOP_MODE or force_json_conversion:
+        value = json.dumps(value_obj)
+    return value
 
 
 class UserManager(BaseUserManager):
@@ -127,12 +152,28 @@ class User(AbstractBaseUser, PermissionsMixin):
     disk_space = models.FloatField(default=524288000, help_text=_('How many bytes a user can upload'))
 
     information = JSONField(null=True)
-    content_defaults = JSONField(default=dict)
-    policies = JSONField(default=dict, null=True)
+    content_defaults = JSONField(default=JSON_DICT_DEFAULT)
+    policies = JSONField(default=JSON_DICT_DEFAULT, null=True)
 
     objects = UserManager()
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name']
+
+    @property
+    def content_defaults_json(self):
+        return load_from_json(self.content_defaults)
+
+    @content_defaults_json.setter
+    def content_defaults_json(self, value):
+        self.content_defaults = convert_to_json(value)
+
+    @property
+    def policies_json(self):
+        return load_from_json(self.policies)
+
+    @policies_json.setter
+    def policies_json(self, value):
+        self.policies = convert_to_json(value)
 
     def __unicode__(self):
         return self.email
@@ -341,9 +382,8 @@ def generate_storage_url(filename, request=None, *args):
 
     # if we're running inside k8s, then just serve the normal /content/{storage,databases} URL,
     # and let nginx handle proper proxying.
-    if run_mode == "k8s":
+    if run_mode in ["desktop", "k8s"]:
         url = "/content/{path}".format(
-            bucket=settings.AWS_S3_BUCKET_NAME,
             path=path,
         )
 
@@ -361,6 +401,8 @@ def generate_storage_url(filename, request=None, *args):
             path=path,
             params=params,
         )
+    else:
+        assert False, "Run mode {} not supported.".format(run_mode)
 
     return url
 
@@ -473,7 +515,7 @@ class Channel(models.Model):
     description = models.CharField(max_length=400, blank=True)
     version = models.IntegerField(default=0)
     thumbnail = models.TextField(blank=True, null=True)
-    thumbnail_encoding = JSONField(default=dict)
+    thumbnail_encoding = JSONField(default=JSON_DICT_DEFAULT)
     editors = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         related_name='editable_channels',
@@ -503,7 +545,7 @@ class Channel(models.Model):
     deleted = models.BooleanField(default=False, db_index=True)
     public = models.BooleanField(default=False, db_index=True)
     preferences = models.TextField(default=DEFAULT_USER_PREFERENCES)
-    content_defaults = JSONField(default=dict)
+    content_defaults = JSONField(default=JSON_DICT_DEFAULT)
     priority = models.IntegerField(default=0, help_text=_("Order to display public channels"))
     last_published = models.DateTimeField(blank=True, null=True)
     secret_tokens = models.ManyToManyField(
@@ -529,6 +571,22 @@ class Channel(models.Model):
         verbose_name=_("languages"),
         blank=True,
     )
+
+    @property
+    def thumbnail_encoding_json(self):
+        return load_from_json(self.thumbnail_encoding)
+
+    @thumbnail_encoding_json.setter
+    def thumbnail_encoding_json(self, value):
+        self.thumbnail_encoding = convert_to_json(value)
+
+    @property
+    def content_defaults_json(self):
+        return load_from_json(self.content_defaults)
+
+    @content_defaults_json.setter
+    def content_defaults_json(self, value):
+        self.content_defaults = convert_to_json(value)
 
     @classmethod
     def get_all_channels(cls):
@@ -613,8 +671,8 @@ class Channel(models.Model):
 
     def get_thumbnail(self):
         if self.thumbnail_encoding:
-            thumbnail_data = self.thumbnail_encoding
-            if thumbnail_data.get("base64"):
+            thumbnail_data = load_from_json(self.thumbnail_encoding)
+            if thumbnail_data and thumbnail_data.get("base64"):
                 return thumbnail_data["base64"]
 
         if self.thumbnail and 'static' not in self.thumbnail:
@@ -626,7 +684,7 @@ class Channel(models.Model):
         return self.main_tree.get_descendants(include_self=True).aggregate(last_modified=Max('modified'))['last_modified']
 
     def get_resource_count(self):
-        return self.main_tree.get_descendants().exclude(kind_id=content_kinds.TOPIC).order_by('content_id').distinct('content_id').count()
+        return self.main_tree.get_descendants().exclude(kind_id=content_kinds.TOPIC).order_by('content_id').values('content_id').distinct().count()
 
     def get_human_token(self):
         return self.secret_tokens.get(is_primary=True)
@@ -849,6 +907,14 @@ class ContentNode(MPTTModel, models.Model):
         super(ContentNode, self).__init__(*args, **kwargs)
         self._original_fields = None
 
+    @property
+    def thumbnail_encoding_json(self):
+        return load_from_json(self.thumbnail_encoding)
+
+    @thumbnail_encoding_json.setter
+    def thumbnail_encoding_json(self, value):
+        self.thumbnail_encoding = convert_to_json(value, force_json_conversion=True)
+
     def _as_dict(self):
         return dict([(f.name, getattr(self, f.name)) for f in self._meta.local_fields if not f.rel])
 
@@ -965,7 +1031,7 @@ class ContentNode(MPTTModel, models.Model):
     def get_thumbnail(self):
         # Problems with json.loads, so use ast.literal_eval to get dict
         if self.thumbnail_encoding:
-            thumbnail_data = load_json_string(self.thumbnail_encoding)
+            thumbnail_data = load_from_json(self.thumbnail_encoding)
             if thumbnail_data.get("base64"):
                 return thumbnail_data["base64"]
 
@@ -1247,7 +1313,7 @@ class SlideshowSlide(models.Model):
     contentnode = models.ForeignKey('ContentNode', related_name="slideshow_slides", blank=True, null=True,
                                     db_index=True)
     sort_order = models.FloatField(default=1.0)
-    metadata = JSONField(default={})
+    metadata = JSONField(default=JSON_DICT_DEFAULT)
 
 
 class StagedFile(models.Model):

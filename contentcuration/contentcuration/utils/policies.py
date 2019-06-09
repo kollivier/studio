@@ -1,6 +1,9 @@
 import datetime
 import json
 
+from contentcuration.models import load_from_json
+
+
 POLICIES = {
     "privacy_policy": {
         "latest": "2018_5_25",
@@ -31,14 +34,9 @@ def check_policies(user):
     # user.policies may be None. Handle that by just converting it to a dict.
     if not user.policies:
         policies = {}
-    # sometimes user.policies is a dict. Read that as JSON.
-    elif isinstance(user.policies, basestring):
-        policies = json.loads(user.policies)
-    # Otherwise, just load whatever's in policies
     else:
-        # Sometimes the json gets converted to a string, so catch that case here
-        policies = user.policies
-
+        # if user.policies is defined, read in the JSON data as a Python dict.
+        policies = user.policies_json
     for k, v in POLICIES.items():
         policy_name = "{}_{}".format(k, v["latest"])
         if not policies.get(policy_name):

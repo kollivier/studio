@@ -168,7 +168,7 @@ def channel_page(request, channel, allow_edit=False, staging=False):
                                                  "ricecooker_version": channel.ricecooker_version,
                                                  "channel_list": channel_list,
                                                  "current_user": json_renderer.render(CurrentUserSerializer(request.user).data),
-                                                 "preferences": json.dumps(channel.content_defaults),
+                                                 "preferences": json.dumps(channel.content_defaults_json),
                                                  "messages": get_messages(),
                                                  "primary_token": token or channel.pk,
                                                  "title": settings.DEFAULT_TITLE,
