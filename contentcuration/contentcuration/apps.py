@@ -22,6 +22,7 @@ class ContentConfig(AppConfig):
             # at the cost of a slight penalty to all reads.
             cursor.execute("PRAGMA journal_mode=WAL;")
             logging.info("Enabled WAL Sqlite journaling mode...")
+
         # see note in the celery_signals.py file for why we import here.
         import contentcuration.utils.celery_signals
         if not settings.DESKTOP_MODE and settings.AWS_AUTO_CREATE_BUCKET:

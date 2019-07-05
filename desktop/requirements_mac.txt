@@ -1,0 +1,3 @@
+py2app = "==0.14"
+wxpython = "==4.0.1"
+pyobjc = "==4"

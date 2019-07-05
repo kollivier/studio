@@ -245,7 +245,8 @@ def debug_serve_file(request, path):
     # to serve the image files to the /content/storage url
     filename = os.path.basename(path)
     checksum, _ext = os.path.splitext(filename)
-    filepath = generate_object_storage_name(checksum, filename)
+    relative_path = generate_object_storage_name(checksum, filename)
+    filepath = os.path.join(settings.DATA_DIR, relative_path)
 
     if not default_storage.exists(filepath):
         raise Http404("The object requested does not exist.")
@@ -256,7 +257,7 @@ def debug_serve_file(request, path):
 
 def debug_serve_content_database_file(request, path):
     filename = os.path.basename(path)
-    path = "/".join([settings.DB_ROOT, filename])
+    path = "/".join([settings.DATA_DIR, settings.DB_ROOT, filename])
     if not default_storage.exists(path):
         raise Http404("The object requested does not exist.")
     with default_storage.open(path, "rb") as f:

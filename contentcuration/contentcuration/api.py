@@ -53,6 +53,8 @@ def write_file_to_storage(fobj, check_valid=False, name=None):
 
     # Get location of file
     file_path = models.generate_object_storage_name(hashed_filename, full_filename)
+    if settings.DESKTOP_MODE:
+        file_path = os.path.join(settings.DATA_DIR, file_path)
 
     # Write file
     storage = default_storage

@@ -27,6 +27,9 @@ logging.getLogger("boto3").setLevel(logging.WARNING)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.getenv("DATA_DIR") or BASE_DIR
 
+if DATA_DIR != BASE_DIR:
+    MEDIA_ROOT = DATA_DIR
+
 STORAGE_ROOT = "storage"
 DB_ROOT = "databases"
 
