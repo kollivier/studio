@@ -227,9 +227,11 @@ def create_async_task(task_name, task_options, task_args=None):
         }
         # The Celery on_failure handler may also add a traceback, so make sure
         # we only create a new error object if one doesn't already exist.
-        if 'error' not in task_info.metadata:
-            task_info.metadata['error'] = {}
-        task_info.metadata['error'].update(error_data)
+        metadata = task_info.metadata_json
+        if 'error' not in metadata:
+            metadata['error'] = {}
+        metadata['error'].update(error_data)
+        task_info.metadata_json = metadata
         task_info.save()
 
     return task, task_info

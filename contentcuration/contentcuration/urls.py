@@ -219,11 +219,19 @@ class TaskViewSet(viewsets.ModelViewSet):
                          channel.viewers.filter(pk=user.pk).exists() or \
                          user.is_admin
                 if has_access:
-                    queryset = Task.objects.filter(metadata__affects__channels__contains=[channel_id])
+                    try:
+                        queryset = Task.objects.filter(metadata__affects__channels__contains=[channel_id])
+                    except:
+                        # FIXME: Find a better way of filtering when metadata is a text field
+                        queryset = Task.objects.filter(metadata__contains=channel_id)
                 else:
                     # If the user doesn't have channel access permissions, they can still perform certain
                     # operations, such as copy. So show them the status of any operation they started.
-                    queryset = Task.objects.filter(user=user, metadata__affects__channels__contains=[channel_id])
+                    try:
+                        queryset = Task.objects.filter(user=user, metadata__affects__channels__contains=[channel_id])
+                    except:
+                        # FIXME: Find a better way of filtering when metadata is a text field
+                        queryset = Task.objects.filter(user=user, metadata__contains=channel_id)
         else:
             queryset = Task.objects.filter(user=self.request.user)
 

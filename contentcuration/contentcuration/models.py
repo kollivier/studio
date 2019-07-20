@@ -1405,6 +1405,14 @@ class SlideshowSlide(models.Model):
     sort_order = models.FloatField(default=1.0)
     metadata = JSONField(default=JSON_DICT_DEFAULT)
 
+    @property
+    def metadata_json(self):
+        return load_from_json(self.metadata)
+
+    @metadata_json.setter
+    def metadata_json(self, value):
+        self.metadata = convert_to_json(value)
+
 
 class StagedFile(models.Model):
     """
@@ -1580,3 +1588,11 @@ class Task(models.Model):
     is_progress_tracking = models.BooleanField(default=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="task")
     metadata = JSONField()
+
+    @property
+    def metadata_json(self):
+        return load_from_json(self.metadata)
+
+    @metadata_json.setter
+    def metadata_json(self, value):
+        self.metadata = convert_to_json(value)

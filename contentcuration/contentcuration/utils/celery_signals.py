@@ -55,9 +55,11 @@ def on_failure(sender, **kwargs):
             'task_kwargs': task_kwargs,
             'traceback': traceback.format_tb(kwargs['traceback'])
         }
-        if 'error' not in task.metadata:
-            task.metadata['error'] = {}
-        task.metadata['error'].update(exception_data)
+        metadata = task.metadata_json
+        if 'error' not in metadata:
+            metadata['error'] = {}
+        metadata['error'].update(exception_data)
+        task.metadata_json = metadata
         task.save()
     except ObjectDoesNotExist:
         pass  # If the object doesn't exist, that likely means the task was created outside of create_async_task
@@ -70,11 +72,13 @@ def on_success(sender, result, **kwargs):
         task_id = sender.request.id
         task = Task.objects.get(task_id=task_id)
         task.status = "SUCCESS"
-        task.metadata['result'] = result
+        metadata = task.metadata_json
+        metadata['result'] = result
         # We're finished, so go ahead and record 100% progress so that getters expecting it get a value
         # even though there is no longer a Celery task to query.
         if task.is_progress_tracking:
-            task.metadata['progress'] = 100
+            metadata['progress'] = 100
+        task.metadata_json = metadata
         task.save()
         logger.info("Task with ID {} succeeded".format(task_id))
     except ObjectDoesNotExist:

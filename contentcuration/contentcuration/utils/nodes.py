@@ -131,7 +131,7 @@ def map_files_to_slideshow_slide_item(user, node, slides, files):
         filename = file_data["filename"]
         checksum, ext = filename.split(".")
 
-        matching_slide = next((slide for slide in slides if slide.metadata["checksum"] == checksum), None)
+        matching_slide = next((slide for slide in slides if slide.metadata_json["checksum"] == checksum), None)
 
         if not matching_slide:
             # TODO(Jacob) Determine proper error type... raise it.

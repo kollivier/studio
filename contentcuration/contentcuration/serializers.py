@@ -1004,7 +1004,7 @@ class TaskSerializer(serializers.ModelSerializer):
         return task.status
 
     def get_metadata(self, task):
-        metadata = task.metadata
+        metadata = task.metadata_json
         # If CELERY_TASK_ALWAYS_EAGER is set, attempts to retrieve state will assert, so do a sanity check first.
         if not settings.CELERY_TASK_ALWAYS_EAGER:
             result = app.AsyncResult(task.task_id)

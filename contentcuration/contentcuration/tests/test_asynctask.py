@@ -30,7 +30,7 @@ class AsyncTaskTestCase(BaseAPITestCase):
         self.assertEqual(task_info.is_progress_tracking, False)
         result = task.get()
         self.assertEqual(result, 42)
-        self.assertEqual(Task.objects.get(task_id=task.id).metadata['result'], 42)
+        self.assertEqual(Task.objects.get(task_id=task.id).metadata_json['result'], 42)
         self.assertEqual(Task.objects.get(task_id=task.id).status, 'SUCCESS')
 
     def test_asynctask_reports_progress(self):
@@ -101,9 +101,9 @@ class AsyncTaskTestCase(BaseAPITestCase):
 
         task = Task.objects.get(task_id=task.id)
         self.assertEqual(task.status, 'FAILURE')
-        self.assertTrue('error' in task.metadata)
+        self.assertTrue('error' in task.metadata_json)
 
-        error = task.metadata['error']
+        error = task.metadata_json['error']
         self.assertItemsEqual(list(error.keys()), ['message', 'task_args', 'task_kwargs', 'traceback'])
         self.assertEqual(len(error['task_args']), 0)
         self.assertEqual(len(error['task_kwargs']), 0)
