@@ -102,15 +102,16 @@ REDIS_URL = "redis://:{password}@{endpoint}:/".format(
 
 CACHE_REDIS_DB = os.getenv("CACHE_REDIS_DB") or "1"
 
-CACHES = {
-    'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': '{url}{db}'.format(url=REDIS_URL, db=CACHE_REDIS_DB),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+if not DESKTOP_MODE:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': '{url}{db}'.format(url=REDIS_URL, db=CACHE_REDIS_DB),
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            }
         }
     }
-}
 
 # READ-ONLY SETTINGS
 # Set STUDIO_INCIDENT_TYPE to a key from contentcuration.utils.incidents to activate
