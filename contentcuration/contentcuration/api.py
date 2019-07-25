@@ -7,6 +7,7 @@ import logging
 import os
 from cStringIO import StringIO
 
+from django.conf import settings
 from django.core.exceptions import SuspiciousOperation
 from django.core.files.storage import default_storage
 from django.db.models import Count

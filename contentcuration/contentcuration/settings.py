@@ -390,7 +390,6 @@ ORPHAN_DATE_CLEAN_UP_THRESHOLD = TWO_WEEKS_AGO
 
 # CLOUD STORAGE SETTINGS
 if not DESKTOP_MODE:
-    raise Exception("Hey! Studio desktop = {}, run mode = {}".format(DESKTOP_MODE, os.getenv('RUN_MODE')))
     DEFAULT_FILE_STORAGE = 'django_s3_storage.storage.S3Storage'
     AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID') or 'development'
     AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY') or 'development'

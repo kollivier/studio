@@ -80,7 +80,9 @@ def file_create(request):
 
     presets = FormatPreset.objects.filter(allowed_formats__extension__contains=ext[1:].lower())
     kind = presets.first().kind
-    content_defaults = json.loads(request.POST.get('content_defaults', None))
+    content_defaults = request.POST.get('content_defaults', None)
+    if content_defaults:
+        content_defaults = json.loads(content_defaults)
     preferences = {}
     if content_defaults:
         preferences = content_defaults
