@@ -52,6 +52,9 @@
           })
         }} <!-- TODO: change to formatRelative -->
       </div>
+      <div v-if="channel.origin" class="download">
+        <a @click="downloadChannel">Download</a>
+      </div>
     </div>
     <div class="is-selected">
       <span class="material-icons rtl-flip">
@@ -113,7 +116,36 @@
       },
     },
     methods: {
+      downloadChannel(event) {
+        console.log("Channel id = " + this.channel.id);
+        var self = this;
+        return new Promise(function(resolve, reject) {
+          var data = {
+            channel_id: self.channel.id,
+            origin: self.channel.origin
+          };
+          $.ajax({
+            method: 'POST',
+            url: window.Urls.download_channel(),
+            data: data,
+            dataType: 'json',
+            success: function(data) {
+              const payload = {
+                task: data,
+                resolveCallback: resolve,
+                rejectCallback: reject,
+              };
+              console.log("data = " + JSON.stringify(data));
+              // self.$store.dispatch('startTask', payload);
+            },
+            error: reject,
+          });
+        });
+      },
       openChannel(event) {
+        if (this.channel.origin) {
+          return;
+        }
         if (event && (event.metaKey || event.ctrlKey)) {
           if (this.channel.EDITABLE) {
             window.open(window.Urls.channel(this.channelID), '_blank');
@@ -185,6 +217,11 @@
         font-size: 10pt;
         font-style: italic;
         color: @gray-500;
+      }
+      .download {
+        position: absolute;
+        bottom: 5px;
+        right: 5px;
       }
     }
   }

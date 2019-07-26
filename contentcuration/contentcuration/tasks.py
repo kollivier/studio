@@ -18,6 +18,7 @@ from contentcuration.models import User
 from contentcuration.serializers import ContentNodeSerializer
 from contentcuration.utils.csv_writer import write_channel_csv_file
 from contentcuration.utils.csv_writer import write_user_csv
+from contentcuration.utils.import_tools import import_channel
 from contentcuration.utils.nodes import duplicate_node_bulk
 from contentcuration.utils.nodes import duplicate_node_inline
 from contentcuration.utils.nodes import move_nodes
@@ -104,6 +105,11 @@ def sync_nodes_task(self, user_id, channel_id, node_ids, sync_attributes, sync_t
                sync_tags, task_object=self)
 
 
+@task(bind=True, name='import_channel_task')
+def import_channel_task(self, user_id, channel_id, origin_domain):
+    import_channel(channel_id, download_url=origin_domain)
+
+
 @task(name='generatechannelcsv_task')
 def generatechannelcsv_task(channel_id, domain, user_id):
     channel = Channel.objects.get(pk=channel_id)
@@ -148,6 +154,7 @@ def getnodedetails_task(node_id):
 
 
 type_mapping = {
+    'download-channel': {'task': import_channel_task, 'progress_tracking': False},
     'duplicate-nodes': {'task': duplicate_nodes_task, 'progress_tracking': True},
     'duplicate-node-inline': {'task': duplicate_node_inline_task, 'progress_tracking': False},
     'export-channel': {'task': export_channel_task, 'progress_tracking': True},

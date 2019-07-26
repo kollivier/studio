@@ -34,6 +34,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 
+import requests
+
 from contentcuration.api import activate_channel
 from contentcuration.api import add_editor_to_channel
 from contentcuration.api import get_staged_diff
@@ -260,7 +262,19 @@ def get_channels_by_token(request, token):
 def get_user_public_channels(request):
     channels = Channel.get_public_channels(defer_nonmain_trees=True)
     channel_serializer = _apply_channel_filters(channels, request.query_params, default_serializer=ChannelSerializerTypes.ALT)
-    return Response(channel_serializer.data)
+    data = channel_serializer.data
+    if settings.DESKTOP_MODE:
+        try:
+            origin_url = 'https://studio.learningequality.org'
+            response = requests.get('{}/api/public/v1/channels'.format(origin_url))
+            json_data = response.json()
+            for channel in json_data:
+                channel['origin'] = origin_url
+                data.append(channel)
+        except Exception as e:
+            logging.warning("Attempt to retrieve public channels failed")
+            logging.warning(e)
+    return Response(data)
 
 
 @api_view(['GET'])

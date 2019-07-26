@@ -3,13 +3,19 @@ import os
 from django.contrib.auth.decorators import login_required
 from django.contrib.sites.shortcuts import get_current_site
 from django.core.files.storage import default_storage
+from django.http import HttpResponseBadRequest
 from django.http import StreamingHttpResponse
 from rest_framework.authentication import BasicAuthentication
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.decorators import api_view
 from rest_framework.decorators import authentication_classes
+from rest_framework.decorators import permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
+from contentcuration.serializers import TaskSerializer
+from contentcuration.tasks import create_async_task
 from contentcuration.utils.export_writer import ChannelDetailsCSVWriter
 from contentcuration.utils.export_writer import ChannelDetailsPDFWriter
 from contentcuration.utils.export_writer import ChannelDetailsPPTWriter
@@ -52,3 +58,33 @@ def get_channel_details_ppt_endpoint(request, channel_id):
 def get_channel_details_csv_endpoint(request, channel_id):
     filepath = ChannelDetailsCSVWriter([channel_id], site=get_current_site(request)).write()
     return generate_response(filepath, "text/csv")
+
+
+@authentication_classes((TokenAuthentication, SessionAuthentication))
+@permission_classes((IsAuthenticated,))
+@api_view(['POST'])
+def download_channel(request):
+    data = request.data
+
+    try:
+        channel_id = data['channel_id']
+        origin_domain = data['origin']
+        task_info = {
+            'user': request.user,
+            'metadata': {
+                'affects': {
+                    'channels': [channel_id],
+                }
+            }
+        }
+
+        task_args = {
+            'user_id': request.user.pk,
+            'channel_id': channel_id,
+            'origin_domain': origin_domain,
+        }
+
+        task, task_info = create_async_task('download-channel', task_info, task_args)
+        return Response(TaskSerializer(task_info).data)
+    except KeyError:
+        raise HttpResponseBadRequest("Missing attribute from data: {}".format(data))
