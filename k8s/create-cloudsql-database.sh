@@ -1,6 +1,7 @@
 set -e
 
-BRANCH=$1
+DBNAME=$1
+
 INSTANCE=$2
 
 DATABASES=`gcloud sql databases list --instance=${INSTANCE} | awk '{print $1}' | tail -n +2`
@@ -8,9 +9,9 @@ DATABASES=`gcloud sql databases list --instance=${INSTANCE} | awk '{print $1}' |
 EXISTENCE=False
 
 for word in ${DATABASES}; do
-    if [[ ${word} = ${BRANCH} ]];
+    if [[ ${word} = ${DBNAME} ]];
     then
-        echo "Database ${BRANCH} exists in SQL instance ${INSTANCE}."
+        echo "Database ${DBNAME} exists in SQL instance ${INSTANCE}."
         EXISTENCE=True
         break
     fi
@@ -19,6 +20,6 @@ done
 
 if [[ ${EXISTENCE} = False ]];
 then
-    echo "Creating database ${BRANCH} in SQL instance ${INSTANCE}."
-    gcloud sql databases create ${BRANCH} --instance=${INSTANCE}
+    echo "Creating database ${DBNAME} in SQL instance ${INSTANCE}."
+    gcloud sql databases create ${DBNAME} --instance=${INSTANCE}
 fi

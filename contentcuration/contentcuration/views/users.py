@@ -1,32 +1,40 @@
 import json
-import logging
 
 from django.conf import settings
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import logout
 from django.contrib.auth.views import password_reset
 from django.contrib.sites.models import Site
 from django.contrib.sites.shortcuts import get_current_site
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.mail import send_mail
 from django.core.urlresolvers import reverse_lazy
-from django.http import HttpResponse, HttpResponseBadRequest
-from django.shortcuts import render, redirect
+from django.http import HttpResponse
+from django.http import HttpResponseBadRequest
+from django.shortcuts import redirect
 from django.template.loader import render_to_string
 from django.utils.translation import ugettext as _
-from django.views.decorators.csrf import csrf_exempt
-from django.views.generic.edit import FormView
-from registration.backends.hmac.views import RegistrationView, ActivationView
+from registration.backends.hmac.views import ActivationView
+from registration.backends.hmac.views import RegistrationView
+from rest_framework.authentication import BasicAuthentication
+from rest_framework.authentication import SessionAuthentication
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import authentication_classes
+from rest_framework.decorators import permission_classes
+from rest_framework.permissions import IsAuthenticated
 
-from contentcuration.api import add_editor_to_channel
-from contentcuration.forms import RegistrationForm, RegistrationInformationForm, USAGES
-from contentcuration.models import Channel, User, Invitation
+from contentcuration.forms import RegistrationForm
+from contentcuration.forms import RegistrationInformationForm
+from contentcuration.models import Channel
+from contentcuration.models import Invitation
+from contentcuration.models import User
 from contentcuration.statistics import record_user_registration_stats
 from contentcuration.utils.policies import get_latest_policies
 
 """ REGISTRATION/INVITATION ENDPOINTS """
 
 
-@csrf_exempt
+@authentication_classes((SessionAuthentication, BasicAuthentication, TokenAuthentication))
+@permission_classes((IsAuthenticated,))
 def send_invitation_email(request):
     if request.method != 'POST':
         return HttpResponseBadRequest("Only POST requests are allowed on this endpoint.")
@@ -34,12 +42,14 @@ def send_invitation_email(request):
     data = json.loads(request.body)
 
     try:
-        user_email = data["user_email"]
+        user_email = data["user_email"].lower()
         channel_id = data["channel_id"]
         share_mode = data["share_mode"]
-        retrieved_user = User.objects.get_or_create(email=user_email)
-        recipient = retrieved_user[0]
         channel = Channel.objects.get(id=channel_id)
+
+        recipient = User.objects.filter(email__iexact=user_email).first()
+        if not recipient:
+            recipient = User.objects.create(email=user_email)
 
         request.user.can_view(channel_id)
 
@@ -70,7 +80,7 @@ def send_invitation_email(request):
                     'invitation_key': invitation.id,
                     'is_new': recipient.is_active is False,
                     'channel': channel.name,
-                    'domain': request.META.get('HTTP_ORIGIN') or "http://{}".format(
+                    'domain': request.META.get('HTTP_ORIGIN') or "https://{}".format(
                         request.get_host() or Site.objects.get_current().domain),
                     }
         subject = render_to_string('permissions/permissions_email_subject.txt', ctx_dict)
@@ -92,11 +102,12 @@ def send_invitation_email(request):
         "share_mode": invitation.share_mode,
     }))
 
+
 class UserRegistrationView(RegistrationView):
     form_class = RegistrationForm
 
     def get_initial(self):
-        initial = self.initial.copy()
+        self.initial.copy()
         return {
             'email': self.request.session.get('email', None),
             'first_name': self.request.session.get('first_name', None),
@@ -107,7 +118,7 @@ class UserRegistrationView(RegistrationView):
 
     def get_context_data(self, **kwargs):
         kwargs = super(UserRegistrationView, self).get_context_data(**kwargs)
-        kwargs.update({"freeze_email": self.request.session.get("freeze_email"),})
+        kwargs.update({"freeze_email": self.request.session.get("freeze_email"), })
         return kwargs
 
     def post(self, request):
@@ -117,6 +128,7 @@ class UserRegistrationView(RegistrationView):
             self.request.session.update(form.cleaned_data)
             return redirect(reverse_lazy('registration_information'))
         return super(UserRegistrationView, self).post(request)
+
 
 class InformationRegistrationView(RegistrationView):
     email_body_template = 'registration/activation_email.txt'
@@ -136,7 +148,7 @@ class InformationRegistrationView(RegistrationView):
         return kwargs
 
     def get_initial(self):
-        initial = self.initial.copy()
+        self.initial.copy()
         return {
             'email': self.request.session.get('email', None),
             'first_name': self.request.session.get('first_name', None),
@@ -158,7 +170,7 @@ class InformationRegistrationView(RegistrationView):
         context = self.get_email_context(activation_key)
         context.update({
             'user': user,
-            'domain': self.request.META.get('HTTP_ORIGIN') or "http://{}".format(
+            'domain': self.request.META.get('HTTP_ORIGIN') or "https://{}".format(
                 self.request.get_host() or Site.objects.get_current().domain),
         })
         subject = render_to_string(self.email_subject_template, context)
@@ -169,10 +181,12 @@ class InformationRegistrationView(RegistrationView):
 
         record_user_registration_stats(user)
 
+
 def custom_password_reset(request, **kwargs):
-    email_context = {'site': get_current_site(request), 'domain': request.META.get('HTTP_ORIGIN') or "http://{}".format(
+    email_context = {'site': get_current_site(request), 'domain': request.META.get('HTTP_ORIGIN') or "https://{}".format(
         request.get_host() or Site.objects.get_current().domain)}
     return password_reset(request, extra_email_context=email_context, **kwargs)
+
 
 def new_user_redirect(request, user_id):
     user = User.objects.get(pk=user_id)
@@ -184,7 +198,9 @@ def new_user_redirect(request, user_id):
 
     return redirect(reverse_lazy("registration_register"))
 
+
 class UserActivationView(ActivationView):
+
     def activate(self, *args, **kwargs):
         user = super(UserActivationView, self).activate(*args, **kwargs)
 

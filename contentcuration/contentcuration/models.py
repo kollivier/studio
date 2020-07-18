@@ -1,38 +1,53 @@
-import ast
-import collections
 import functools
 import hashlib
 import json
 import logging
 import os
-import socket
-import sys
 import urlparse
 import uuid
+import warnings
+from datetime import datetime
 
+import pytz
 from django.conf import settings
-from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
+from django.contrib.auth.base_user import AbstractBaseUser
+from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
+from django.contrib.postgres.fields import JSONField
 from django.core.cache import cache
-from django.core.exceptions import (MultipleObjectsReturned,
-                                    ObjectDoesNotExist, PermissionDenied)
-from django.core.files.storage import FileSystemStorage, default_storage
+from django.core.exceptions import MultipleObjectsReturned
+from django.core.exceptions import ObjectDoesNotExist
+from django.core.exceptions import PermissionDenied
+from django.core.files.storage import default_storage
+from django.core.files.storage import FileSystemStorage
 from django.core.mail import send_mail
-from django.db import IntegrityError, connection, models
-from django.db.models import Q, Sum, Max
+from django.db import connection
+from django.db import IntegrityError
+from django.db import models
+from django.db.models import Count
+from django.db.models import Max
+from django.db.models import Q
+from django.db.models import Sum
 from django.dispatch import receiver
 from django.utils import timezone
 from django.utils.translation import ugettext as _
-from django.contrib.postgres.fields import JSONField
-from le_utils.constants import (content_kinds, exercises, file_formats, licenses,
-                                format_presets, languages, roles)
-from mptt.models import (MPTTModel, TreeForeignKey, TreeManager,
-                         raise_if_unsaved)
-
+from le_utils import proquint
+from le_utils.constants import content_kinds
+from le_utils.constants import exercises
+from le_utils.constants import file_formats
+from le_utils.constants import format_presets
+from le_utils.constants import languages
+from le_utils.constants import roles
+from mptt.models import MPTTModel
+from mptt.models import raise_if_unsaved
+from mptt.models import TreeForeignKey
+from mptt.models import TreeManager
 from pg_utils import DistinctSum
 
+from contentcuration.db.models.manager import CustomTreeManager
 from contentcuration.statistics import record_channel_stats
-from contentcuration.utils.networking import get_local_ip_address
+from contentcuration.utils.cache import delete_public_channel_cache_keys
+from contentcuration.utils.parser import load_json_string
 
 EDIT_ACCESS = "edit"
 VIEW_ACCESS = "view"
@@ -71,11 +86,21 @@ def _create_tree_space(self, target_tree_id, num_trees=1):
 
     self._orig_create_tree_space(target_tree_id, num_trees)
 
+
+def _get_next_tree_id(self, *args, **kwargs):
+    new_id = MPTTTreeIDManager.objects.create().id
+    return new_id
+
+
 TreeManager._orig_create_tree_space = TreeManager._create_tree_space
 TreeManager._create_tree_space = _create_tree_space
 
+TreeManager._orig_get_next_tree_id = TreeManager._get_next_tree_id
+TreeManager._get_next_tree_id = _get_next_tree_id
+
 
 class UserManager(BaseUserManager):
+
     def create_user(self, email, first_name, last_name, password=None):
         if not email:
             raise ValueError('Email address not specified')
@@ -122,6 +147,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __unicode__(self):
         return self.email
 
+    def delete(self):
+        # Remove any invitations associated to this account
+        self.sent_to.all().delete()
+        super(User, self).delete()
+
     def can_edit(self, channel_id):
         channel = Channel.objects.filter(pk=channel_id).first()
         if not self.is_admin and channel and not channel.editors.filter(pk=self.pk).exists():
@@ -130,8 +160,93 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def can_view(self, channel_id):
         channel = Channel.objects.filter(pk=channel_id).first()
+        if channel and channel.public:
+            return True
         if not self.is_admin and channel and not channel.editors.filter(pk=self.pk).exists() and not channel.viewers.filter(pk=self.pk).exists():
             raise PermissionDenied("Cannot view content")
+        return True
+
+    def can_view_node(self, node):
+        if self.is_admin:
+            return True
+        root = node.get_root()
+        if root == self.clipboard_tree or root.pk == settings.ORPHANAGE_ROOT_ID:
+            return True
+        channel_id = Channel.objects.filter(Q(main_tree=root)
+                                            | Q(chef_tree=root)
+                                            | Q(trash_tree=root)
+                                            | Q(staging_tree=root)
+                                            | Q(previous_tree=root)).values_list("id", flat=True).first()
+        if not channel_id:
+            # Don't let a non-admin view orphaned nodes
+            raise PermissionDenied("Cannot view content")
+        return self.can_view(channel_id)
+
+    def can_view_nodes(self, nodes):
+        if self.is_admin:
+            return True
+        root_nodes_all = ContentNode.objects.filter(parent=None, tree_id__in=nodes.values_list("tree_id", flat=True).distinct()).distinct()
+        # If all the nodes belong to the clipboard, skip the channel check.
+
+        root_nodes = root_nodes_all.exclude(tree_id=self.clipboard_tree.tree_id).exclude(pk=settings.ORPHANAGE_ROOT_ID)
+        if root_nodes.count() == 0 and root_nodes_all.count() > 0:
+            return True
+
+        channels = Channel.objects.filter(Q(main_tree__in=root_nodes)
+                                          | Q(chef_tree__in=root_nodes)
+                                          | Q(trash_tree__in=root_nodes)
+                                          | Q(staging_tree__in=root_nodes)
+                                          | Q(previous_tree__in=root_nodes))
+        channels_user_has_perms_for = channels.filter(Q(editors__id__contains=self.id) | Q(viewers__id__contains=self.id) | Q(public=True))
+        # The channel user has perms for is a subset of all the channels that were passed in.
+        # We check the count for simplicity, as if the user does not have permissions for
+        # even one of the channels the content is drawn from, then the number of channels
+        # will be smaller.
+        total_channels = channels.distinct().count()
+        # If no channels, then these nodes are orphans - do not let them be viewed except by an admin.
+        if not total_channels or total_channels > channels_user_has_perms_for.distinct().count():
+            raise PermissionDenied("Cannot view content")
+        return True
+
+    def can_edit_node(self, node):
+        if self.is_admin:
+            return True
+        root = node.get_root()
+        if root == self.clipboard_tree or root.pk == settings.ORPHANAGE_ROOT_ID:
+            return True
+
+        channel_id = Channel.objects.filter(Q(main_tree=root)
+                                            | Q(chef_tree=root)
+                                            | Q(trash_tree=root)
+                                            | Q(staging_tree=root)
+                                            | Q(previous_tree=root)).values_list("id", flat=True).first()
+        if not channel_id:
+            # Don't let a non-admin edit orphaned nodes
+            raise PermissionDenied("Cannot edit content")
+        return self.can_edit(channel_id)
+
+    def can_edit_nodes(self, nodes):
+        if self.is_admin:
+            return True
+        root_nodes_all = ContentNode.objects.filter(parent=None, tree_id__in=nodes.values_list("tree_id", flat=True).distinct()).distinct()
+        # If all the nodes belong to the clipboard, skip the channel check.
+        root_nodes = root_nodes_all.exclude(tree_id=self.clipboard_tree.tree_id).exclude(pk=settings.ORPHANAGE_ROOT_ID)
+        if root_nodes.count() == 0 and root_nodes_all.count() > 0:
+            return True
+        channels = Channel.objects.filter(Q(main_tree__in=root_nodes)
+                                          | Q(chef_tree__in=root_nodes)
+                                          | Q(trash_tree__in=root_nodes)
+                                          | Q(staging_tree__in=root_nodes)
+                                          | Q(previous_tree__in=root_nodes))
+        channels_user_can_edit = channels.filter(editors__id__contains=self.id)
+        # The channel user has perms for is a subset of all the channels that were passed in.
+        # We check the count for simplicity, as if the user does not have permissions for
+        # even one of the channels the content is drawn from, then the number of channels
+        # will be smaller.
+        total_channels = channels.distinct().count()
+        # If no channels, then these nodes are orphans - do not let them be edited except by an admin.
+        if not total_channels or total_channels > channels_user_can_edit.distinct().count():
+            raise PermissionDenied("Cannot edit content")
         return True
 
     def check_space(self, size, checksum):
@@ -156,15 +271,14 @@ class User(AbstractBaseUser, PermissionsMixin):
         staged_size = float(channel_files.aggregate(used=Sum('file_size'))['used'] or 0)
 
         if self.get_available_space(active_files=active_files) < (active_size + staged_size):
-            raise PermissionDenied(_('Out of storage! Request more at %(email)s') % {'email': settings.SPACE_REQUEST_EMAIL})
-
+            raise PermissionDenied(_('Out of storage! Request more space under Settings > Storage.'))
 
     def check_staged_space(self, size, checksum):
         if checksum in self.staged_files.values_list('checksum', flat=True):
             return True
         space = self.get_available_staged_space()
         if space < size:
-            raise PermissionDenied(_('Out of storage! Request more at %(email)s') % {'email': settings.SPACE_REQUEST_EMAIL})
+            raise PermissionDenied(_('Out of storage! Request more space under Settings > Storage.'))
 
     def get_available_staged_space(self):
         space_used = self.staged_files.aggregate(size=Sum("file_size"))['size'] or 0
@@ -175,14 +289,14 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def get_user_active_trees(self):
         return self.editable_channels.exclude(deleted=True)\
-                .values_list('main_tree__tree_id', flat=True)
+            .values_list('main_tree__tree_id', flat=True)
 
     def get_user_active_files(self):
         active_trees = self.get_user_active_trees()
         return self.files.select_related('contentnode')\
-                            .filter(Q(contentnode__tree_id__in=active_trees))\
-                            .values('checksum', 'file_size')\
-                            .distinct()
+            .filter(Q(contentnode__tree_id__in=active_trees))\
+            .values('checksum', 'file_size')\
+            .distinct()
 
     def get_space_used(self, active_files=None):
         active_files = active_files or self.get_user_active_files()
@@ -230,7 +344,7 @@ class User(AbstractBaseUser, PermissionsMixin):
             changed = True
 
         if not self.clipboard_tree:
-            self.clipboard_tree = ContentNode.objects.create(title=self.email + " clipboard", kind_id="topic",
+            self.clipboard_tree = ContentNode.objects.create(title=self.email + " clipboard", kind_id=content_kinds.TOPIC,
                                                              sort_order=get_next_sort_order())
             self.clipboard_tree.save()
             changed = True
@@ -244,6 +358,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class UUIDField(models.CharField):
+
     def __init__(self, *args, **kwargs):
         kwargs['max_length'] = 32
         super(UUIDField, self).__init__(*args, **kwargs)
@@ -253,6 +368,20 @@ class UUIDField(models.CharField):
         if isinstance(result, uuid.UUID):
             result = result.hex
         return result
+
+
+class MPTTTreeIDManager(models.Model):
+    """
+    Because MPTT uses plain integers for tree IDs and does not use an auto-incrementing field for them,
+    the same ID can sometimes be assigned to two trees if two channel create ops happen concurrently.
+
+    As we are using this table only for the ID generation, it does not need any fields.
+
+    We resolve this by creating a dummy table and using its ID as the tree index to take advantage of the db's
+    concurrency-friendly way of generating sequential integer IDs. There is a custom migration that ensures
+    that the number of records (and thus id) matches the max tree ID number when this table gets added.
+    """
+
 
 def file_on_disk_name(instance, filename):
     """
@@ -284,13 +413,20 @@ def object_storage_name(instance, filename):
     :param filename: str
     :return: str
     """
-    return generate_object_storage_name(instance.checksum, filename)
+
+    default_ext = ''
+    if instance.file_format_id:
+        default_ext = '.{}'.format(instance.file_format_id)
+
+    return generate_object_storage_name(instance.checksum, filename, default_ext)
 
 
-def generate_object_storage_name(checksum, filename):
+def generate_object_storage_name(checksum, filename, default_ext=''):
     """ Separated from file_on_disk_name to allow for simple way to check if has already exists """
     h = checksum
-    basename, ext = os.path.splitext(filename)
+    basename, actual_ext = os.path.splitext(filename)
+    ext = actual_ext if actual_ext else default_ext
+
     # Use / instead of os.path.join as Windows makes this \\
     directory = "/".join([settings.STORAGE_ROOT, h[0], h[1]])
     return os.path.join(directory, h + ext.lower())
@@ -332,7 +468,7 @@ def generate_storage_url(filename, request=None, *args):
         # access even if they don't need to log in
         params = urlparse.urlparse(default_storage.url(path)).query
         host = "localhost"
-        port = 9000 # hardcoded to the default minio IP address
+        port = 9000  # hardcoded to the default minio IP address
         url = "http://{host}:{port}/{bucket}/{path}?{params}".format(
             host=host,
             port=port,
@@ -358,7 +494,6 @@ class FileOnDiskStorage(FileSystemStorage):
             logging.warn('Content copy "%s" already exists!' % name)
             return name
         return super(FileOnDiskStorage, self)._save(name, content)
-
 
 
 class ChannelResourceSize(models.Model):
@@ -395,8 +530,55 @@ class SecretToken(models.Model):
     token = models.CharField(max_length=100, unique=True)
     is_primary = models.BooleanField(default=False)
 
+    @classmethod
+    def exists(cls, token):
+        """
+        Return true when the token string given by string already exists.
+        Returns false otherwise.
+        """
+        return cls.objects.filter(token=token).exists()
+
+    @classmethod
+    def generate_new_token(cls):
+        """
+        Creates a primary secret token for the current channel using a proquint
+        string. Creates a secondary token containing the channel id.
+
+        These tokens can be used to refer to the channel to download its content
+        database.
+        """
+        token = proquint.generate()
+
+        # Try 100 times to generate a unique token.
+        TRIALS = 100
+        for __ in range(TRIALS):
+            token = proquint.generate()
+            if SecretToken.exists(token):
+                continue
+            else:
+                break
+        # after TRIALS attempts and we didn't get a unique token,
+        # just raise an error.
+        # See https://stackoverflow.com/a/9980160 on what for-else loop does.
+        else:
+            raise ValueError("Cannot generate new token")
+
+        # We found a unique token! Save it
+        return token
+
+    def set_channels(self, channels):
+        channel_ids = channels.values_list('pk', flat=True)
+
+        # Remove token from channels that aren't in list
+        for channel in self.channels.exclude(pk__in=channel_ids):
+            channel.secret_tokens.remove(self)
+
+        # Add tokens to channels in list
+        for channel in channels.exclude(secret_tokens__token=self.token):
+            channel.secret_tokens.add(self)
+
     def __str__(self):
-        return self.token
+        return "{}-{}".format(self.token[:5], self.token[5:])
 
 
 class Channel(models.Model):
@@ -406,7 +588,7 @@ class Channel(models.Model):
     description = models.CharField(max_length=400, blank=True)
     version = models.IntegerField(default=0)
     thumbnail = models.TextField(blank=True, null=True)
-    thumbnail_encoding = models.TextField(blank=True, null=True)
+    thumbnail_encoding = JSONField(default=dict)
     editors = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         related_name='editable_channels',
@@ -445,6 +627,8 @@ class Channel(models.Model):
         verbose_name=_("secret tokens"),
         blank=True,
     )
+    source_url = models.CharField(max_length=200, blank=True, null=True)
+    demo_server_url = models.CharField(max_length=200, blank=True, null=True)
 
     # Fields specific to content generated by Ricecooker
     source_id = models.CharField(max_length=200, blank=True, null=True)
@@ -452,6 +636,7 @@ class Channel(models.Model):
     ricecooker_version = models.CharField(max_length=100, blank=True, null=True)
 
     # Fields to calculate when channel is published
+    published_data = JSONField(default=dict)
     icon_encoding = models.TextField(blank=True, null=True)
     total_resource_count = models.IntegerField(default=0)
     published_kind_count = models.TextField(blank=True, null=True)
@@ -462,6 +647,14 @@ class Channel(models.Model):
         verbose_name=_("languages"),
         blank=True,
     )
+
+    def __init__(self, *args, **kwargs):
+        super(Channel, self).__init__(*args, **kwargs)
+        self._orig_public = self.public
+
+    @classmethod
+    def get_all_channels(cls):
+        return cls.objects.select_related('main_tree').prefetch_related('editors', 'viewers').distinct()
 
     def resource_size_key(self):
         return "{}_resource_size".format(self.pk)
@@ -481,9 +674,7 @@ class Channel(models.Model):
         cache.set(self.resource_size_key(), files['resource_size'] or 0, None)
         return files['resource_size'] or 0
 
-
-    def save(self, *args, **kwargs):
-
+    def save(self, *args, **kwargs):  # noqa: C901
         original_channel = None
         if self.pk and Channel.objects.filter(pk=self.pk).exists():
             original_channel = Channel.objects.get(pk=self.pk)
@@ -505,8 +696,12 @@ class Channel(models.Model):
                 sort_order=get_next_sort_order(),
                 content_id=self.id,
                 node_id=self.id,
+                original_channel_id=self.id,
+                source_channel_id=self.id,
             )
-            self.main_tree.save()
+            # Ensure that locust or unit tests raise if there are any concurrency issues with tree ids.
+            if settings.DEBUG:
+                assert ContentNode.objects.filter(parent=None, tree_id=self.main_tree.tree_id).count() == 1
         elif self.main_tree.title != self.name:
             self.main_tree.title = self.name
             self.main_tree.save()
@@ -519,29 +714,33 @@ class Channel(models.Model):
                 content_id=self.id,
                 node_id=self.id,
             )
-            self.trash_tree.save()
         elif self.trash_tree.title != self.name:
             self.trash_tree.title = self.name
             self.trash_tree.save()
 
-        super(Channel, self).save(*args, **kwargs)
-
         if original_channel and not self.main_tree.changed:
-            fields_to_check = ['description', 'language_id', 'thumbnail', 'name', 'language', 'thumbnail_encoding', 'deleted']
+            # Changing channel metadata should also mark main_tree as changed
+            fields_to_check = ['description', 'language_id', 'thumbnail', 'name', 'thumbnail_encoding', 'deleted']
             self.main_tree.changed = any([f for f in fields_to_check if getattr(self, f) != getattr(original_channel, f)])
 
             # Delete db if channel has been deleted and mark as unpublished
             if not original_channel.deleted and self.deleted:
                 self.pending_editors.all().delete()
-                channel_db_url = os.path.join(settings.DB_ROOT, self.id) + ".sqlite3"
-                if os.path.isfile(channel_db_url):
-                    os.unlink(channel_db_url)
+                export_db_storage_path = os.path.join(settings.DB_ROOT, "{channel_id}.sqlite3".format(channel_id=self.id))
+                if default_storage.exists(export_db_storage_path):
+                    default_storage.delete(export_db_storage_path)
                     self.main_tree.published = False
             self.main_tree.save()
 
+        super(Channel, self).save(*args, **kwargs)
+
+        # if this change affects the public channel list, clear the channel cache
+        if self.public or self._orig_public != self.public:
+            delete_public_channel_cache_keys()
+
     def get_thumbnail(self):
         if self.thumbnail_encoding:
-            thumbnail_data = ast.literal_eval(self.thumbnail_encoding)
+            thumbnail_data = self.thumbnail_encoding
             if thumbnail_data.get("base64"):
                 return thumbnail_data["base64"]
 
@@ -549,6 +748,65 @@ class Channel(models.Model):
             return generate_storage_url(self.thumbnail)
 
         return '/static/img/kolibri_placeholder.png'
+
+    def has_changes(self):
+        return self.main_tree.get_descendants(include_self=True).filter(changed=True).exists()
+
+    def get_date_modified(self):
+        return self.main_tree.get_descendants(include_self=True).aggregate(last_modified=Max('modified'))['last_modified']
+
+    def get_resource_count(self):
+        return self.main_tree.get_descendants().exclude(kind_id=content_kinds.TOPIC).order_by('content_id').distinct('content_id').count()
+
+    def get_human_token(self):
+        return self.secret_tokens.get(is_primary=True)
+
+    def get_channel_id_token(self):
+        return self.secret_tokens.get(token=self.id)
+
+    def make_token(self):
+        token = self.secret_tokens.create(token=SecretToken.generate_new_token(), is_primary=True)
+        self.secret_tokens.get_or_create(token=self.id)
+        return token
+
+    def make_public(self, bypass_signals=False):
+        """
+        Sets the current channel object to be public and viewable by anyone.
+
+        If bypass_signals is True, update the model in such a way that we
+        prevent any model signals from running due to the update.
+
+        Returns the same channel object.
+        """
+        if bypass_signals:
+            self.public = True     # set this attribute still, so the object will be updated
+            Channel.objects.filter(id=self.id).update(public=True)
+            # clear the channel cache
+            delete_public_channel_cache_keys()
+        else:
+            self.public = True
+            self.save()
+
+        return self
+
+    @classmethod
+    def get_public_channels(cls, defer_nonmain_trees=False):
+        """
+        Get all public channels.
+
+        If defer_nonmain_trees is True, defer the loading of all
+        trees except for the main_tree."""
+        if defer_nonmain_trees:
+            c = (Channel.objects
+                 .filter(public=True)
+                 .exclude(deleted=True)
+                 .select_related('main_tree')
+                 .prefetch_related('editors')
+                 .defer('trash_tree', 'clipboard_tree', 'staging_tree', 'chef_tree', 'previous_tree', 'viewers'))
+        else:
+            c = Channel.objects.filter(public=True).exclude(deleted=True)
+
+        return c
 
     class Meta:
         verbose_name = _("Channel")
@@ -559,9 +817,43 @@ class Channel(models.Model):
         ]
 
 
+class ChannelSet(models.Model):
+    # NOTE: this is referred to as "channel collections" on the front-end, but we need to call it
+    # something else as there is already a ChannelCollection model on the front-end
+    id = UUIDField(primary_key=True, default=uuid.uuid4)
+    name = models.CharField(max_length=200, blank=True)
+    description = models.CharField(max_length=400, blank=True)
+    public = models.BooleanField(default=False, db_index=True)
+    editors = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name='channel_sets',
+        verbose_name=_("editors"),
+        help_text=_("Users with edit rights"),
+        blank=True,
+    )
+    secret_token = models.ForeignKey('SecretToken', null=True, blank=True, related_name='channel_sets', on_delete=models.SET_NULL)
+
+    def get_channels(self):
+        if self.secret_token:
+            return self.secret_token.channels.filter(deleted=False)
+
+    def save(self, *args, **kwargs):
+        super(ChannelSet, self).save(*args, **kwargs)
+
+        if not self.secret_token:
+            self.secret_token = SecretToken.objects.create(token=SecretToken.generate_new_token())
+            self.save()
+
+    def delete(self, *args, **kwargs):
+        super(ChannelSet, self).delete(*args, **kwargs)
+
+        if self.secret_token:
+            self.secret_token.delete()
+
+
 class ContentTag(models.Model):
     id = UUIDField(primary_key=True, default=uuid.uuid4)
-    tag_name = models.CharField(max_length=30)
+    tag_name = models.CharField(max_length=50)
     channel = models.ForeignKey('Channel', related_name='tags', blank=True, null=True, db_index=True)
 
     def __str__(self):
@@ -603,17 +895,19 @@ class License(models.Model):
     def __str__(self):
         return self.license_name
 
+
 def get_next_sort_order(node=None):
     # Get the next sort order under parent (roots if None)
     # Based on Kevin's findings, we want to append node as prepending causes all other root sort_orders to get incremented
     max_order = ContentNode.objects.filter(parent=node).aggregate(max_order=Max('sort_order'))['max_order'] or 0
     return max_order + 1
 
+
 class ContentNode(MPTTModel, models.Model):
     """
     By default, all nodes have a title and can be used as a topic.
     """
-    # The id should be the same between the content curation server and Kolibri.
+    # Random id used internally on Studio (See `node_id` for id used in Kolibri)
     id = UUIDField(primary_key=True, default=uuid.uuid4)
 
     # the content_id is used for tracking a user's interaction with a piece of
@@ -628,8 +922,9 @@ class ContentNode(MPTTModel, models.Model):
     original_channel_id = UUIDField(primary_key=False, editable=False, null=True,
                                     db_index=True)  # Original channel copied from
     source_channel_id = UUIDField(primary_key=False, editable=False, null=True)  # Immediate channel copied from
+    # Original node_id of node copied from (TODO: original_node_id clashes with original_node field - temporary)
     original_source_node_id = UUIDField(primary_key=False, editable=False, null=True,
-                                        db_index=True)  # Original node_id of node copied from (TODO: original_node_id clashes with original_node field - temporary)
+                                        db_index=True)
     source_node_id = UUIDField(primary_key=False, editable=False, null=True)  # Immediate node_id of node copied from
 
     # Fields specific to content generated by Ricecooker
@@ -652,8 +947,10 @@ class ContentNode(MPTTModel, models.Model):
                                    help_text=_("Ascending, lowest number shown first"))
     copyright_holder = models.CharField(max_length=200, null=True, blank=True, default="",
                                         help_text=_("Organization of person who holds the essential rights"))
-    cloned_source = TreeForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='clones')
+    # legacy field...
     original_node = TreeForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='duplicates')
+    cloned_source = TreeForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='clones')
+
     thumbnail_encoding = models.TextField(blank=True, null=True)
 
     created = models.DateTimeField(auto_now_add=True, verbose_name=_("created"))
@@ -662,18 +959,18 @@ class ContentNode(MPTTModel, models.Model):
     publishing = models.BooleanField(default=False)
 
     changed = models.BooleanField(default=True)
-    extra_fields = models.TextField(blank=True, null=True)
+    extra_fields = JSONField(default=dict, blank=True, null=True)
     author = models.CharField(max_length=200, blank=True, default="", help_text=_("Who created this content?"),
                               null=True)
     aggregator = models.CharField(max_length=200, blank=True, default="", help_text=_("Who gathered this content together?"),
-                              null=True)
+                                  null=True)
     provider = models.CharField(max_length=200, blank=True, default="", help_text=_("Who distributed this content?"),
-                              null=True)
+                                null=True)
 
     role_visibility = models.CharField(max_length=50, choices=roles.choices, default=roles.LEARNER)
     freeze_authoring_data = models.BooleanField(default=False)
 
-    objects = TreeManager()
+    objects = CustomTreeManager()
 
     @raise_if_unsaved
     def get_root(self):
@@ -684,32 +981,65 @@ class ContentNode(MPTTModel, models.Model):
 
     def __init__(self, *args, **kwargs):
         super(ContentNode, self).__init__(*args, **kwargs)
-        self._original_fields = self._as_dict() # Fast way to keep track of updates (no need to query db again)
+        self._original_fields = None
 
     def _as_dict(self):
         return dict([(f.name, getattr(self, f.name)) for f in self._meta.local_fields if not f.rel])
 
+    def _mark_unchanged(self):
+        """
+        This method sets all cached fields to current values in order to force the node into an unchanged state.
+        This is a helper method for tests that let us test the behavior of marking nodes changed, as they are only
+        marked as unchanged upon publish.
+        Please do not use this for any production code.
+        """
+        if not self._original_fields:
+            self.get_changed_fields()
+        new_state = self._as_dict()
+        for field_name in self._original_fields:
+            self._original_fields[field_name] = new_state[field_name]
+
     def get_changed_fields(self):
         """ Returns a dictionary of all of the changed (dirty) fields """
         new_state = self._as_dict()
+        # In Django 1.11, _as_dict() can trigger a refresh_from_db is called from __init__, so just load it on
+        # first call here instead. We may want to whitelist what fields to check in the future
+        if not self._original_fields:
+            self._original_fields = ContentNode.objects.get(pk=self.pk)._as_dict()
+            # don't include the changed (dirty) field in the list of fields we check to see if the object is dirty
+            del self._original_fields['changed']
+            del self._original_fields['modified']
+            del self._original_fields['publishing']
+
         return dict([(key, value) for key, value in self._original_fields.iteritems() if value != new_state[key]])
 
-    def get_tree_data(self, include_self=True):
-        if not include_self:
-            return [c.get_tree_data() for c in self.children.all()]
-        elif self.kind_id == content_kinds.TOPIC:
-            return {
+    def get_tree_data(self, levels=float('inf')):
+        """
+        Returns `levels`-deep tree information starting at current node.
+        Args:
+          levels (int): depth of tree hierarchy to return
+        Returns:
+          tree (dict): starting with self, with children list containing either
+                       the just the children's `node_id`s or full recusive tree.
+        """
+        if self.kind_id == content_kinds.TOPIC:
+            node_data = {
                 "title": self.title,
                 "kind": self.kind_id,
-                "children": [c.get_tree_data() for c in self.children.all()],
                 "node_id": self.node_id,
+                "studio_id": self.id,
             }
+            children = self.children.all()
+            if levels > 0:
+                node_data["children"] = [c.get_tree_data(levels=levels-1) for c in children]
+            return node_data
         elif self.kind_id == content_kinds.EXERCISE:
             return {
                 "title": self.title,
                 "kind": self.kind_id,
                 "count": self.assessment_items.count(),
                 "node_id": self.node_id,
+                "studio_id": self.id,
             }
         else:
             return {
@@ -717,37 +1047,15 @@ class ContentNode(MPTTModel, models.Model):
                 "kind": self.kind_id,
                 "file_size": self.files.values('file_size').aggregate(size=Sum('file_size'))['size'],
                 "node_id": self.node_id,
+                "studio_id": self.id,
             }
-
-    def get_node_tree_data(self):
-        nodes = []
-        for child in self.children.all():
-            if child.kind_id == content_kinds.TOPIC:
-                nodes.append({
-                    "title": child.title,
-                    "kind": child.kind_id,
-                    "node_id": child.node_id,
-                })
-            elif child.kind_id == content_kinds.EXERCISE:
-                nodes.append({
-                    "title": child.title,
-                    "kind": child.kind_id,
-                    "count": child.assessment_items.count(),
-                })
-            else:
-                nodes.append({
-                "title": child.title,
-                "kind": child.kind_id,
-                "file_size": child.files.values('file_size').aggregate(size=Sum('file_size'))['size'],
-            })
-        return nodes
 
     def get_original_node(self):
         original_node = self.original_node or self
         if self.original_channel_id and self.original_source_node_id:
             original_tree_id = Channel.objects.select_related("main_tree").get(pk=self.original_channel_id).main_tree.tree_id
             original_node = ContentNode.objects.filter(tree_id=original_tree_id, node_id=self.original_source_node_id).first() or \
-                            ContentNode.objects.filter(tree_id=original_tree_id, content_id=self.content_id).first() or self
+                ContentNode.objects.filter(tree_id=original_tree_id, content_id=self.content_id).first() or self
         return original_node
 
     def get_associated_presets(self):
@@ -782,15 +1090,149 @@ class ContentNode(MPTTModel, models.Model):
     def get_channel(self):
         try:
             root = self.get_root()
-            return root.channel_main.first() or root.channel_chef.first() or root.channel_trash.first() or root.channel_staging.first() or root.channel_previous.first()
+            if not root:
+                return None
+            return Channel.objects.filter(Q(main_tree=root) | Q(chef_tree=root) | Q(trash_tree=root) | Q(staging_tree=root) | Q(previous_tree=root)).first()
         except (ObjectDoesNotExist, MultipleObjectsReturned, AttributeError):
             return None
 
-    def save(self, *args, **kwargs):
+    def get_thumbnail(self):
+        # Problems with json.loads, so use ast.literal_eval to get dict
+        if self.thumbnail_encoding:
+            thumbnail_data = load_json_string(self.thumbnail_encoding)
+            if thumbnail_data.get("base64"):
+                return thumbnail_data["base64"]
+
+        thumbnail = self.files.filter(preset__thumbnail=True).first()
+        if thumbnail:
+            return generate_storage_url(str(thumbnail))
+
+        return "/".join([settings.STATIC_URL.rstrip("/"), "img", "{}_placeholder.png".format(self.kind_id)])
+
+    @classmethod
+    def get_nodes_with_title(cls, title, limit_to_children_of=None):
+        """
+        Returns all ContentNodes with a given title. If limit_to_children_of
+        is passed in with an id, only look at all the children of the node with that id.
+        """
+        if limit_to_children_of:
+            root = cls.objects.get(id=limit_to_children_of)
+            return root.get_descendants().filter(title=title)
+        else:
+            return cls.objects.filter(title=title)
+
+    def get_details(self):
+        """
+        Returns information about the node and its children, including total size, languages, files, etc.
+
+        :return: A dictionary with detailed statistics and information about the node.
+        """
+        descendants = self.get_descendants().prefetch_related('children', 'files', 'tags') \
+            .select_related('license', 'language')
+        channel = self.get_channel()
+
+        # Get resources
+        resources = descendants.exclude(kind=content_kinds.TOPIC)
+
+        # Get all copyright holders, authors, aggregators, and providers and split into lists
+        creators = resources.values_list('copyright_holder', 'author', 'aggregator', 'provider')
+        split_lst = zip(*creators)
+        copyright_holders = filter(bool, set(split_lst[0])) if len(split_lst) > 0 else []
+        authors = filter(bool, set(split_lst[1])) if len(split_lst) > 1 else []
+        aggregators = filter(bool, set(split_lst[2])) if len(split_lst) > 2 else []
+        providers = filter(bool, set(split_lst[3])) if len(split_lst) > 3 else []
+
+        # Get sample pathway by getting longest path
+        # Using resources.aggregate adds a lot of time, use values that have already been fetched
+        max_level = max(resources.values_list('level', flat=True).distinct() or [0])
+        deepest_node = resources.filter(level=max_level).first()
+        pathway = list(deepest_node.get_ancestors()
+                       .exclude(parent=None)
+                       .values('title', 'node_id', 'kind_id')
+                       ) if deepest_node else []
+        sample_nodes = [
+            {
+                "node_id": n.node_id,
+                "title": n.title,
+                "description": n.description,
+                "thumbnail": n.get_thumbnail(),
+            } for n in deepest_node.get_siblings(include_self=True)[0:4]
+        ] if deepest_node else []
+
+        # Get list of channels nodes were originally imported from (omitting the current channel)
+        channel_id = channel and channel.id
+        originals = resources.values("original_channel_id") \
+            .annotate(count=Count("original_channel_id")) \
+            .order_by("original_channel_id")
+        originals = {c['original_channel_id']: c['count'] for c in originals}
+        original_channels = Channel.objects.exclude(pk=channel_id) \
+            .filter(pk__in=[k for k, v in originals.items()], deleted=False)
+        original_channels = [{
+            "id": c.id,
+            "name": "{}{}".format(c.name, _(" (Original)") if channel_id == c.id else ""),
+            "thumbnail": c.get_thumbnail(),
+            "count": originals[c.id]
+        } for c in original_channels]
+
+        # Get tags from channel
+        tags = list(ContentTag.objects.filter(tagged_content__pk__in=descendants.values_list('pk', flat=True))
+                    .values('tag_name')
+                    .annotate(count=Count('tag_name'))
+                    .order_by('tag_name'))
+
+        # Get resource variables
+        resource_count = resources.count() or 0
+        resource_size = resources.values('files__checksum', 'files__file_size').distinct().aggregate(
+            resource_size=Sum('files__file_size'))['resource_size'] or 0
+
+        languages = list(set(descendants.exclude(language=None).values_list('language__native_name', flat=True)))
+        accessible_languages = resources.filter(files__preset_id=format_presets.VIDEO_SUBTITLE) \
+            .values_list('files__language_id', flat=True)
+        accessible_languages = list(
+            Language.objects.filter(id__in=accessible_languages).distinct().values_list('native_name', flat=True))
+
+        licenses = list(set(resources.exclude(license=None).values_list('license__license_name', flat=True)))
+        kind_count = list(resources.values('kind_id').annotate(count=Count('kind_id')).order_by('kind_id'))
+
+        # Add "For Educators" booleans
+        for_educators = {
+            "coach_content": resources.filter(role_visibility=roles.COACH).exists(),
+            "exercises": resources.filter(kind_id=content_kinds.EXERCISE).exists(),
+        }
+
+        # Serialize data
+        data = {
+            "last_update": pytz.utc.localize(datetime.now()).strftime(settings.DATE_TIME_FORMAT),
+            "resource_count": resource_count,
+            "resource_size": resource_size,
+            "includes": for_educators,
+            "kind_count": kind_count,
+            "languages": languages,
+            "accessible_languages": accessible_languages,
+            "licenses": licenses,
+            "tags": tags,
+            "copyright_holders": copyright_holders,
+            "authors": authors,
+            "aggregators": aggregators,
+            "providers": providers,
+            "sample_pathway": pathway,
+            "original_channels": original_channels,
+            "sample_nodes": sample_nodes,
+        }
+
+        # Set cache with latest data
+        cache.set("details_{}".format(self.node_id), json.dumps(data), None)
+        return data
+
+    def save(self, *args, **kwargs):  # noqa: C901
+
+        channel_id = None
         if kwargs.get('request'):
             request = kwargs.pop('request')
             channel = self.get_channel()
             request.user.can_edit(channel and channel.pk)
+            if channel:
+                channel_id = channel.pk
 
         self.changed = self.changed or len(self.get_changed_fields()) > 0
 
@@ -806,14 +1248,19 @@ class ContentNode(MPTTModel, models.Model):
         if self.cloned_source is None:
             self.cloned_source = self
 
-        if self.original_channel_id is None:
-            # TODO: This SIGNIFICANTLY slows down the creation flow
-            channel = (self.parent and self.parent.get_channel()) or self.get_channel() # Check parent first otherwise new content won't have root
-            self.original_channel_id = channel.id if channel else None
-        if self.source_channel_id is None:
-            # TODO: This SIGNIFICANTLY slows down the creation flow
-            channel = (self.parent and self.parent.get_channel()) or self.get_channel() # Check parent first otherwise new content won't have root
-            self.source_channel_id = channel.id if channel else None
+        # Getting the channel is an expensive call, so warn about it so that we can reduce the number of cases in which
+        # we need to do this.
+        if not channel_id and (not self.original_channel_id or not self.source_channel_id):
+            warnings.warn("Determining node's channel is an expensive operation. Please set original_channel_id and "
+                          "source_channel_id to the parent's values when creating child nodes.", stacklevel=2)
+
+            channel = (self.parent and self.parent.get_channel()) or self.get_channel()
+            if channel:
+                channel_id = channel.pk
+            if self.original_channel_id is None:
+                self.original_channel_id = channel_id
+            if self.source_channel_id is None:
+                self.source_channel_id = channel_id
 
         if self.original_source_node_id is None:
             self.original_source_node_id = self.node_id
@@ -870,6 +1317,34 @@ class FormatPreset(models.Model):
     def __str__(self):
         return self.id
 
+    @classmethod
+    def guess_format_preset(cls, filename):
+        """
+        Guess the format preset of a filename based on its extension.
+
+        Return None if format is unknown.
+        """
+
+        _, ext = os.path.splitext(filename)
+        ext = ext.lstrip(".")
+        f = FormatPreset.objects.filter(
+            allowed_formats__extension=ext,
+            display=True
+        )
+        return f.first()
+
+    @classmethod
+    def get_preset(cls, preset_name):
+        """
+        Get the FormatPreset object with that exact name.
+
+        Returns None if that format preset is not found.
+        """
+        try:
+            return FormatPreset.objects.get(id=preset_name)
+        except FormatPreset.DoesNotExist:
+            return None
+
 
 class Language(models.Model):
     id = models.CharField(max_length=14, primary_key=True)
@@ -901,6 +1376,14 @@ class AssessmentItem(models.Model):
     randomize = models.BooleanField(default=False)
     deleted = models.BooleanField(default=False)
 
+
+class SlideshowSlide(models.Model):
+    contentnode = models.ForeignKey('ContentNode', related_name="slideshow_slides", blank=True, null=True,
+                                    db_index=True)
+    sort_order = models.FloatField(default=1.0)
+    metadata = JSONField(default={})
+
+
 class StagedFile(models.Model):
     """
     Keeps track of files uploaded through Ricecooker to avoid user going over disk quota limit
@@ -922,6 +1405,7 @@ class File(models.Model):
                                     blank=True)
     contentnode = models.ForeignKey(ContentNode, related_name='files', blank=True, null=True, db_index=True)
     assessment_item = models.ForeignKey(AssessmentItem, related_name='files', blank=True, null=True, db_index=True)
+    slideshow_slide = models.ForeignKey(SlideshowSlide, related_name='files', blank=True, null=True, db_index=True)
     file_format = models.ForeignKey(FileFormat, related_name='files', blank=True, null=True, db_index=True)
     preset = models.ForeignKey(FormatPreset, related_name='files', blank=True, null=True, db_index=True)
     language = models.ForeignKey(Language, related_name='files', blank=True, null=True)
@@ -934,6 +1418,16 @@ class File(models.Model):
 
     def __str__(self):
         return '{checksum}{extension}'.format(checksum=self.checksum, extension='.' + self.file_format.extension)
+
+    def filename(self):
+        """
+        Returns just the filename of the File in storage, without the path
+
+        e.g. abcd.mp4
+        """
+        # TODO(aron): write tests for this
+
+        return os.path.basename(self.file_on_disk.name)
 
     def save(self, *args, **kwargs):
         """
@@ -951,8 +1445,13 @@ class File(models.Model):
                 self.checksum = md5.hexdigest()
             if not self.file_size:
                 self.file_size = self.file_on_disk.size
-            if not self.file_format:
-                self.file_format_id = os.path.splitext(self.file_on_disk.name)[1]
+            if not self.file_format_id:
+                ext = os.path.splitext(self.file_on_disk.name)[1].lstrip('.')
+                if ext in dict(file_formats.choices).keys():
+                    self.file_format_id = ext
+                else:
+                    raise ValueError("Files of type `{}` are not supported.".format(ext))
+
         super(File, self).save(*args, **kwargs)
 
 
@@ -969,9 +1468,9 @@ def auto_delete_file_on_delete(sender, instance, **kwargs):
 def delete_empty_file_reference(checksum, extension):
     filename = checksum + '.' + extension
     if not File.objects.filter(checksum=checksum).exists() and not Channel.objects.filter(thumbnail=filename).exists():
-        file_on_disk_path = generate_file_on_disk_name(checksum, filename)
-        if os.path.isfile(file_on_disk_path):
-            os.remove(file_on_disk_path)
+        storage_path = generate_object_storage_name(checksum, filename)
+        if default_storage.exists(storage_path):
+            default_storage.delete(storage_path)
 
 
 class PrerequisiteContentRelationship(models.Model):
@@ -1005,6 +1504,7 @@ class PrerequisiteContentRelationship(models.Model):
 
     def __unicode__(self):
         return u'%s' % (self.pk)
+
 
 class RelatedContentRelationship(models.Model):
     """
@@ -1046,3 +1546,14 @@ class Invitation(models.Model):
     class Meta:
         verbose_name = _("Invitation")
         verbose_name_plural = _("Invitations")
+
+
+class Task(models.Model):
+    """Asynchronous tasks"""
+    task_id = UUIDField(db_index=True, default=uuid.uuid4)  # This ID is used as the Celery task ID
+    task_type = models.CharField(max_length=50)
+    created = models.DateTimeField(default=timezone.now)
+    status = models.CharField(max_length=10)
+    is_progress_tracking = models.BooleanField(default=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="task")
+    metadata = JSONField()

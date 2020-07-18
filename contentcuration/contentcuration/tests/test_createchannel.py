@@ -1,25 +1,13 @@
 import base64
 import json
-import os
-import pytest
+
 import requests
-import tempfile
-
-from cStringIO import StringIO
-from django.test import Client
-from django.test import TestCase
-from mixer.backend.django import mixer
-from contentcuration import models
-
-from django.core.files.uploadedfile import SimpleUploadedFile
+from base import BaseTestCase
 from django.core.urlresolvers import reverse_lazy
+from testdata import create_studio_file
 
-from rest_framework.test import APIClient
-
-from base import StudioTestCase
-from testdata import create_temp_file
+from contentcuration import models
 from contentcuration import models as cc
-
 
 ###
 # Test helper functions
@@ -38,9 +26,9 @@ def add_field_defaults_to_node(node):
             "questions": [],
             "extra_fields": {}
         })
-    if not "files" in node:
+    if "files" not in node:
         node["files"] = []
-    if not "description" in node:
+    if "description" not in node:
         node["description"] = ""
     if "children" in node:
         for i in range(0, len(node["children"])):
@@ -52,14 +40,11 @@ def add_field_defaults_to_node(node):
 # Tests
 ###
 
-class CreateChannelTestCase(StudioTestCase):
+class CreateChannelTestCase(BaseTestCase):
 
     @classmethod
     def setUpClass(cls):
         super(CreateChannelTestCase, cls).setUpClass()
-
-        cls.url = "http://127.0.0.1:8000"
-        cls.admin_user = models.User.objects.create_superuser('big_shot', 'bigshot@reallybigcompany.com', 'password')
 
         cls.channel_metadata = {
             "name": "Aron's cool channel",
@@ -73,28 +58,13 @@ class CreateChannelTestCase(StudioTestCase):
         super(CreateChannelTestCase, self).setUp()
         self.topic = cc.ContentKind.objects.get(kind='topic')
         self.license = cc.License.objects.all()[0]
-        self.fileobj_audio = create_temp_file("abc", 'audio', 'mp3', 'application/audio')
-        self.fileobj_video = create_temp_file("def", 'video', 'mp4', 'application/video')
-        self.fileobj_document = create_temp_file("ghi", 'document', 'pdf', 'application/pdf')
-        self.fileobj_exercise = create_temp_file("jkl", 'exercise', 'perseus', 'application/perseus')
-
-    def admin_client(self):
-        client = APIClient()
-        client.force_authenticate(self.admin_user)
-        return client
-
-    def upload_file(self):
-        """
-        Uploads a file to the server using an authorized client.
-        """
-        fileobj_temp = create_temp_file(":)")
-        name = fileobj_temp['name']
-        file_upload_url = self.url + str(reverse_lazy('api_file_upload'))
-        f = SimpleUploadedFile(name, fileobj_temp['data'])
-        return self.admin_client().post(file_upload_url, {"file": f})
+        self.fileinfo_audio = create_studio_file("abc", preset='audio', ext='mp3')
+        self.fileinfo_video = create_studio_file("def", preset='high_res_video', ext='mp4')
+        self.fileinfo_document = create_studio_file("ghi", preset='document', ext='pdf')
+        self.fileinfo_exercise = create_studio_file("jkl", preset='exercise', ext='perseus')
 
     def create_channel(self):
-        create_channel_url = self.url + str(reverse_lazy('api_create_channel'))
+        create_channel_url = str(reverse_lazy('api_create_channel'))
         payload = {
             'channel_data': self.channel_metadata,
         }
@@ -103,18 +73,22 @@ class CreateChannelTestCase(StudioTestCase):
         return response
 
     def test_api_file_upload_status(self):
-        response = self.upload_file()
+        fileobj, response = self.upload_temp_file(":)")
         assert response.status_code == requests.codes.ok
 
     def test_channel_create_channel_created(self):
         response = self.create_channel()
         assert response.status_code == requests.codes.ok
         channel_id = json.loads(response.content)['channel_id']
+
         name_check = self.channel_metadata['name']
         description_check = self.channel_metadata['description']
         thumbnail_check = self.channel_metadata['thumbnail']
-        assert models.Channel.objects.filter(pk=channel_id, name=name_check, description=description_check,
-                                             thumbnail=thumbnail_check).exists()
+        results = models.Channel.objects.filter(pk=channel_id, name=name_check, description=description_check,
+                                                thumbnail=thumbnail_check)
+        assert results.exists()
+        channel = results.first()
+        assert channel.main_tree.get_channel() == channel
 
     def test_channel_create_staging_tree_is_none(self):
         """
@@ -192,7 +166,7 @@ class CreateChannelTestCase(StudioTestCase):
         channel = models.Channel.objects.get(pk=channel_id)
         assert channel.version == 0
 
-    ### Helper methods for constructing data
+    # Helper methods for constructing data
 
     def topic_tree_data(self):
         # FIXME: This method simply returns a data structure, but the complicating factor is that,
@@ -223,9 +197,9 @@ class CreateChannelTestCase(StudioTestCase):
                         "content_id": "fd373d00523b5484a5586c81e4004afb",
                         "author": "Aristotle",
                         "description": "The Nicomachean Ethics is the name normally given to ...",
-                        "files": [get_file_data(self.fileobj_document)],
+                        "files": [get_file_data(self.fileinfo_document)],
                         "license": self.license.license_name,
-                        "kind": self.fileobj_document['db_file'].preset.kind.pk,
+                        "kind": self.fileinfo_document['db_file'].preset.kind.pk,
                     },
                     {
                         "title": "The Critique of Pure Reason",
@@ -241,10 +215,10 @@ class CreateChannelTestCase(StudioTestCase):
                                 "node_id": "facefacefacefacefacefacefaceface",
                                 "content_id": "9ec91b66dc175c93a4c6a599a76cbc25",
                                 "related": "deaddeaddeaddeaddeaddeaddeaddead",
-                                "files": [get_file_data(self.fileobj_video)],
+                                "files": [get_file_data(self.fileinfo_video)],
                                 "author": "Immanuel Kant",
                                 "license": self.license.license_name,
-                                "kind": self.fileobj_video['db_file'].preset.kind.pk,
+                                "kind": self.fileinfo_video['db_file'].preset.kind.pk,
                             },
                             {
                                 "title": "02 - Preface to the Second Edition",
@@ -282,9 +256,9 @@ class CreateChannelTestCase(StudioTestCase):
                         "node_id": "beefbeefbeefbeefbeefbeefbeefbeef",
                         "content_id": "598fc2a55ea55f86bb7ce9008f34a9d0",
                         "author": "Bradley Smoker",
-                        "files": [get_file_data(self.fileobj_audio)],
+                        "files": [get_file_data(self.fileinfo_audio)],
                         "license": self.license.license_name,
-                        "kind": self.fileobj_audio['db_file'].preset.kind.pk,
+                        "kind": self.fileinfo_audio['db_file'].preset.kind.pk,
                     },
                     {
                         "title": "Food Mob Bites 10: Garlic Bread",
@@ -292,9 +266,9 @@ class CreateChannelTestCase(StudioTestCase):
                         "content_id": "7fc278d7dd31577da822e525ec67ee02",
                         "author": "Revision 3",
                         "description": "Basic garlic bread recipe.",
-                        "files": [get_file_data(self.fileobj_exercise)],
+                        "files": [get_file_data(self.fileinfo_exercise)],
                         "license": self.license.license_name,
-                        "kind": self.fileobj_exercise['db_file'].preset.kind.pk,
+                        "kind": self.fileinfo_exercise['db_file'].preset.kind.pk,
                     }
                 ]
             },
@@ -309,7 +283,7 @@ class CreateChannelTestCase(StudioTestCase):
         root_id = json.loads(self.create_channel().content)['root']
 
         def upload_nodes(root_id, nodes):
-            add_nodes_url = self.url + str(reverse_lazy('api_add_nodes_to_tree'))
+            add_nodes_url = str(reverse_lazy('api_add_nodes_to_tree'))
             payload = {
                 'root_id': root_id,
                 'content_data': nodes,

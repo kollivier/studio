@@ -1,9 +1,13 @@
 import logging
-import os
-import tempfile
+
+from .settings import *  # noqa
 
 DEBUG = True
-from .settings import *
+
+if RUNNING_TESTS:
+    # if we're running tests, run Celery tests synchronously so tests won't complete before the process
+    # is finished.
+    CELERY_TASK_ALWAYS_EAGER = True
 
 ALLOWED_HOSTS = ["studio.local", "192.168.31.9", "127.0.0.1", "*"]
 

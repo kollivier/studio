@@ -1,4 +1,5 @@
-var Models = require("../../models");
+var Models = require('../../models');
+const State = require('../../state');
 
 /** Given an Array of ContentNode Objects, create a ContentNodeCollection
  * @param {Array<ContentNode>} contentNodes
@@ -6,16 +7,15 @@ var Models = require("../../models");
  */
 exports.createContentNodeCollection = function(contentNodes) {
   return new Models.ContentNodeCollection(contentNodes);
-}
+};
 
 // Utility function that fetches importable/accessible channels
 exports.fetchImportableChannels = function() {
-  return window.current_channel.get_accessible_channel_roots()
-  .then(function modify(channels) {
+  return State.current_channel.get_accessible_channel_roots().then(function modify(channels) {
     channels.forEach(function(channel) {
-      // alias title to channel_name
-      channel.set('title', channel.get('channel_name'))
+      // All channels are topics at the top level
+      channel.set('kind', 'topic');
     });
     return channels.toJSON();
-  })
-}
+  });
+};

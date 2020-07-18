@@ -28,7 +28,7 @@
 			{% csrf_token %}
 			<div class="input-group settings_field">
 				<span class="input-group-addon">{% trans "Username" %}</span>
-				<input type="text" class="form-control setting_input" value="{{user.email}}" disabled>
+				<input type="text" dir="auto" class="form-control setting_input" value="{{user.email}}" disabled>
 			</div>
 			<div class="input-group settings_field">
 				<span class="input-group-addon">{% trans "First Name" %}</span>
@@ -40,13 +40,19 @@
 			</div>
 		</div>
 		<br>
-		<input id="save" class="action-button pull-right" type="submit" value="{% trans 'No Changes Found' %}" disabled/>
+		<input id="save" class="action-button pull-right" type="submit" value="{% trans 'SAVE CHANGES' %}" disabled/>
 	</form>
 </div>
 <script>
-	$(".setting_input").on("keydown", function(event){
-		$("#save").attr("disabled", false)
-		$("#save").val("{% trans 'SAVE CHANGES' %}")
+	window.addEventListener('load', () => {
+		let saveButton = document.getElementById('save');
+		let inputs = document.getElementsByClassName('setting_input');
+		Array.from(inputs).forEach(input => {
+			input.addEventListener('keydown', (event) => {
+				saveButton.removeAttribute('disabled');
+			});
+		});
 	});
+
 </script>
 {% endblock settingscontent %}

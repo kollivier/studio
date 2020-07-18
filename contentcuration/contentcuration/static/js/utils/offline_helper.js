@@ -4,6 +4,7 @@
 */
 
 var $ = require('jquery');
+const State = require("edit_channel/state");
 require("offline-js");
 require("../../css/offline-theme-slide.css");
 require("utils/snake");
@@ -28,11 +29,8 @@ require("utils/snake");
 
 var languageMapping = {
     "en": "english",
-    "es": "spanish"
-}
-
-function getOfflineLanguageName(code) {
-	return languageMapping[code.split("-")[0]] || languageMapping['en'];
+    "es": "spanish",
+    "ar": "arabic"
 }
 
 var disabledOverlay = document.createElement("DIV");
@@ -44,7 +42,7 @@ $(function() {
 	disabledOverlay.style.display = "none";
 });
 
-var language = getOfflineLanguageName(window.languageCode || "en");
+var language = languageMapping[State.currentLanguage.lang_code];
 
 Offline.options = {
 	checks: {xhr: {url: window.Urls.stealth()}},
@@ -56,8 +54,9 @@ Offline.options = {
 var run = function(){
  	if (Offline.state === 'up') {
 	 	Offline.check();
-	 	Offline.on('down', function() {disabledOverlay.style.display = "block";});
-        Offline.on('up', function() {disabledOverlay.style.display = "none";});
  	}
 }
-setInterval(run, 5000);
+Offline.on('down', function() {disabledOverlay.style.display = "block";});
+Offline.on('up', function() {disabledOverlay.style.display = "none";});
+
+setInterval(run, 60000);

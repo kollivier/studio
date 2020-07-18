@@ -12,16 +12,9 @@
 {% block js_bundle %}
 	<script>
 		var channel = JSON.parse("{{ channel|escapejs}}");
-		var license_list = JSON.parse("{{ license_list|escapejs}}");
-		var fformats = JSON.parse("{{ fileformat_list|escapejs }}");
-		var presets = JSON.parse("{{ fpreset_list|escapejs }}");
-		var langs = JSON.parse("{{ langs_list|escapejs }}");
-		var kinds = JSON.parse("{{ ckinds_list |escapejs }}");
 		var user = JSON.parse("{{ current_user|escapejs }}");
 		var preferences = JSON.parse("{{ preferences|escapejs }}");
 		var title = "{{ title }}";
-		var mastery = JSON.parse("{{ mastery |escapejs }}");
-		var roles = JSON.parse("{{ roles |escapejs }}");
 		var url = "{% url 'channels' %}";
 	</script>
 
@@ -30,11 +23,11 @@
 
 {% block content %}
 	<div id="channel-edit-sortable-boundary">
-
+		<div id="channel-edit-overlay"></div>
 	<nav class="navbar" id="secondary-nav">
-		<ul class="nav navbar-nav navbar-left">
+		<ul class="nav">
 			<li><a href="/channels" id="back_to_home"><i class="material-icons">home</i></a></li>
-			{% if not allow_edit %}<li class="channel_edit_label">{% if is_public %}{%trans "Public Channel" %}{% else %}{%trans "Viewing" %}{% endif %}</li>{% endif %}
+			{% if not allow_edit %}<li class="channel_edit_label">{% if is_public %}{%trans "Public" %}{% else %}{%trans "Viewing" %}{% endif %}</li>{% endif %}
 			{% if allow_edit %}
 				{% if staging %}<li class="channel_edit_label">{%trans "Reviewing" %}</li>
 				{% else %}<li class="channel_edit_label">{%trans "Editing" %}</li>{% endif %}
@@ -61,19 +54,19 @@
 					{% endfor %}
 				</ul>
 			</li>
-			{% if not staging and allow_edit %}
+			{% if not staging and allow_edit and not ricecooker_version %}
 				<li id="channel_settings" title="{%trans 'Open channel settings' %}">
 					<i class="material-icons">settings</i>
 				</li>
 			{% endif %}
-			<li id="queue-area" class="container-fluid"></li>
-		</ul>
-		<ul class="nav navbar-nav navbar-right" id="publish">
+			<li id="queue-area"></li>
 		{% if staging %}
-			<li id="channel-activate-button" class="text-center">{%trans "DEPLOY CHANNEL" %}</li>
+			<li>
+				<a id="channel-activate-button" class="text-center">{%trans "DEPLOY CHANNEL" %}</a>
+			</li>
 		{% else %}
-			<li id="hide-if-unpublished"><a id="get_published_id">{% trans "Show ID" %}</a></li>
-			{% if allow_edit %}<li><button id="channel-publish-button" class="text-center"> {%trans "PUBLISH" %}</button></li>{% endif %}
+			<li id="hide-if-unpublished"><a id="get_published_id">{% trans "Show Token" %}</a></li>
+			<li><span id="channel-publish-button"></span></li>
 		{% endif %}
 		</ul>
 	</nav>

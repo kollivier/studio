@@ -1,30 +1,44 @@
 import json
-import math
 import os
-from datetime import date, timedelta, datetime
-from django.shortcuts import render, redirect
+from datetime import date
+from datetime import datetime
+from datetime import timedelta
+
 from django.conf import settings as ccsettings
 from django.contrib import messages
+from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth import views, update_session_auth_hash
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.sites.shortcuts import get_current_site
 from django.core.mail import send_mail
-from django.db.models import Count
-from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden
+from django.core.urlresolvers import reverse_lazy
+from django.http import HttpResponse
+from django.http import HttpResponseBadRequest
+from django.http import HttpResponseForbidden
+from django.shortcuts import redirect
+from django.shortcuts import render
 from django.template.loader import render_to_string
 from django.utils.translation import ugettext as _
 from django.views.generic.edit import FormView
-from contentcuration.forms import ProfileSettingsForm, AccountSettingsForm, PreferencesSettingsForm, PolicyAcceptForm, StorageRequestForm
+from le_utils.constants import content_kinds
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view
-from django.core.urlresolvers import reverse_lazy
-from contentcuration.decorators import browser_is_supported, has_accepted_policies
-from contentcuration.models import Channel, License
+
+from contentcuration.decorators import browser_is_supported
+from contentcuration.decorators import has_accepted_policies
+from contentcuration.forms import AccountSettingsForm
+from contentcuration.forms import IssueReportForm
+from contentcuration.forms import PolicyAcceptForm
+from contentcuration.forms import PreferencesSettingsForm
+from contentcuration.forms import ProfileSettingsForm
+from contentcuration.forms import StorageRequestForm
+from contentcuration.models import Channel
 from contentcuration.tasks import generateusercsv_task
 from contentcuration.utils.csv_writer import generate_user_csv_filename
 from contentcuration.utils.google_drive import add_row_to_sheet
 from contentcuration.utils.policies import get_latest_policies
+
+ISSUE_UPDATE_DATE = datetime(2018, 10, 29)
 
 
 @login_required
@@ -107,6 +121,7 @@ class PreferencesView(LoginRequiredMixin, FormView):
     def user(self):
         return self.request.user
 
+
 class PolicyAcceptView(LoginRequiredMixin, FormView):
     success_url = reverse_lazy('channels')
     form_class = PolicyAcceptForm
@@ -134,7 +149,7 @@ def account_settings(request):
     else:
         form = AccountSettingsForm(request.user)
 
-    channels = [ # Count on editors is always returning 1, so iterate manually
+    channels = [  # Count on editors is always returning 1, so iterate manually
         {"name": c.name, "id": c.id}
         for c in request.user.editable_channels.filter(deleted=False)
         if c.editors.count() == 1
@@ -158,7 +173,7 @@ def delete_user_account(request, user_email):
         return HttpResponseBadRequest(_("Cannot delete admin accounts"))
 
     # Send email to notify team about account being deleted
-    buffer_date  = (date.today()+timedelta(days=ccsettings.ACCOUNT_DELETION_BUFFER)).strftime('%A, %B %d %Y')
+    buffer_date = (date.today() + timedelta(days=ccsettings.ACCOUNT_DELETION_BUFFER)).strftime('%A, %B %d %Y')
     subject = "Kolibri Studio Account Deleted"
     message = render_to_string('settings/account_deleted_notification_email.txt', {"user": request.user, "buffer_date": buffer_date})
     send_mail(subject, message, ccsettings.DEFAULT_FROM_EMAIL, [ccsettings.REGISTRATION_INFORMATION_EMAIL])
@@ -175,18 +190,22 @@ def delete_user_account(request, user_email):
     })
     send_mail(subject, message, ccsettings.DEFAULT_FROM_EMAIL, [ccsettings.REGISTRATION_INFORMATION_EMAIL])
 
-    # Delete user, any previously deleted channels, and csvs
+    # Delete user, any previously deleted channels, channel sets, and csvs
     for c in request.user.editable_channels.all():
         if c.editors.count() == 1:
             c.delete()
+    for cs in request.user.channel_sets.all():
+        if cs.editors.count() == 1:
+            cs.delete()
 
-    csv_path = generate_user_csv_filename(request.user) # Remove any generated csvs
+    csv_path = generate_user_csv_filename(request.user)  # Remove any generated csvs
     if os.path.exists(csv_path):
         os.unlink(csv_path)
 
     request.user.delete()
 
-    return HttpResponse({"success" : True })
+    return HttpResponse({"success": True})
+
 
 @login_required
 @api_view(['POST'])
@@ -194,7 +213,8 @@ def export_user_data(request, user_email):
     if request.user.email != user_email:
         return HttpResponseForbidden(_("Cannot export another user's data"))
     generateusercsv_task.delay(user_email)
-    return HttpResponse({"success" : True })
+    return HttpResponse({"success": True})
+
 
 def account_deleted(request):
     return render(request, "settings/account_deleted.html")
@@ -207,12 +227,22 @@ def tokens_settings(request):
                                                     "page": "tokens",
                                                     "tokens": [str(user_token)]})
 
+
 @login_required
 def policies_settings(request):
     return render(request, 'settings/policy.html', {"current_user": request.user,
                                                     "page": "policies",
                                                     "policies": get_latest_policies()})
 
+
+KIND_TRANSLATIONS = {
+    content_kinds.TOPIC: _("Topics"),
+    content_kinds.VIDEO: _("Videos"),
+    content_kinds.AUDIO: _("Audio"),
+    content_kinds.EXERCISE: _("Exercises"),
+    content_kinds.DOCUMENT: _("Documents"),
+    content_kinds.HTML5: _("HTML Apps"),
+}
 
 
 class StorageSettingsView(LoginRequiredMixin, FormView):
@@ -222,7 +252,7 @@ class StorageSettingsView(LoginRequiredMixin, FormView):
 
     def get_form_kwargs(self):
         kw = super(StorageSettingsView, self).get_form_kwargs()
-        kw['channel_choices'] = [(c['id'], c['name']) for c in self.request.user.editable_channels.values("id", "name")]
+        kw['channel_choices'] = [(c['id'], c['name']) for c in self.request.user.editable_channels.exclude(deleted=True).values("id", "name")]
         kw['request'] = self.request
         return kw
 
@@ -232,8 +262,11 @@ class StorageSettingsView(LoginRequiredMixin, FormView):
             # Send email with storage request
             channel_ids = form.cleaned_data.get("public") or ""
             channels = Channel.objects.filter(pk__in=channel_ids.split(',')).values('id', 'name')
-            #  name, email, storage requested, date of request, number of resources, average resource size, kind of content, licenses, potential public channels, audience, uploading for, message
-            uploading_for = "{} (organization)".format(form.cleaned_data.get('organization')) if form.cleaned_data.get('org_or_personal') == "Organization" else form.cleaned_data.get('org_or_personal')
+            # name, email, storage requested, date of request, number of resources,
+            # average resource size, kind of content, licenses, potential public
+            # channels, audience, uploading for, message, time constraint
+            uploading_for = "{} (organization)".format(form.cleaned_data.get('organization')) if form.cleaned_data.get(
+                'org_or_personal') == "Organization" else form.cleaned_data.get('org_or_personal')
             values = [
                 "{} {}".format(request.user.first_name, request.user.last_name),
                 request.user.email,
@@ -252,6 +285,7 @@ class StorageSettingsView(LoginRequiredMixin, FormView):
                 uploading_for,
                 form.cleaned_data.get('organization_type'),
                 form.cleaned_data.get('message'),
+                form.cleaned_data.get('time_constraint'),
             ]
 
             # Write to storage request sheet
@@ -272,12 +306,12 @@ class StorageSettingsView(LoginRequiredMixin, FormView):
         storage_used = self.request.user.get_space_used()
         storage_percent = (min(storage_used / float(self.request.user.disk_space), 1) * 100)
         breakdown = [{
-                        "name": k.capitalize(),
-                        "size": v,
-                        "percent": "%.2f" % (min(float(v) / float(self.request.user.disk_space), 1) * 100)
-                    } for k,v in self.request.user.get_space_used_by_kind().items()]
+            "name": KIND_TRANSLATIONS.get(k),
+            "size": v,
+            "percent": "%.2f" % (min(float(v) / float(self.request.user.disk_space), 1) * 100)
+        } for k, v in self.request.user.get_space_used_by_kind().items()]
 
-        kwargs.update( {
+        kwargs.update({
             "current_user": self.request.user,
             "page": "storage",
             "percent_used": "%.2f" % storage_percent,
@@ -293,3 +327,33 @@ class StorageSettingsView(LoginRequiredMixin, FormView):
     def form_valid(self, form):
         messages.add_message(self.request, messages.INFO, _("Your storage request has been submitted for processing"))
         return super(StorageSettingsView, self).form_valid(form)
+
+
+class IssuesSettingsView(LoginRequiredMixin, FormView):
+    success_url = reverse_lazy('issues_settings')
+    template_name = 'settings/issues.html'
+    form_class = IssueReportForm
+
+    def post(self, request):
+        form = self.get_form()
+        if form.is_valid():
+            message = render_to_string('settings/issue_report_email.txt', {"data": form.cleaned_data, "user": self.request.user})
+            send_mail(_("Kolibri Studio Issue Report"), message, ccsettings.DEFAULT_FROM_EMAIL, [ccsettings.HELP_EMAIL, self.request.user.email])
+
+            return self.form_valid(form)
+        else:
+            return self.form_invalid(form)
+
+    def get_context_data(self, **kwargs):
+        kwargs = super(IssuesSettingsView, self).get_context_data(**kwargs)
+        kwargs.update({
+            "current_user": self.request.user,
+            "page": "issues",
+            "support_email": ccsettings.HELP_EMAIL,
+            "update_date": ISSUE_UPDATE_DATE,
+        })
+        return kwargs
+
+    def form_valid(self, form):
+        messages.add_message(self.request, messages.INFO, _("Your issue report has been submitted for processing"))
+        return super(IssuesSettingsView, self).form_valid(form)

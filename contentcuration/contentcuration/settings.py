@@ -9,13 +9,17 @@ https://docs.djangoproject.com/en/1.8/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/1.8/ref/settings/
 """
-
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
+import logging
 import os
 import re
-import logging
+import sys
+from datetime import datetime
+from datetime import timedelta
+
 import pycountry
-from datetime import datetime, timedelta
+
+from contentcuration.utils.incidents import INCIDENTS
 
 logging.getLogger("newrelic").setLevel(logging.CRITICAL)
 logging.getLogger("botocore").setLevel(logging.WARNING)
@@ -25,8 +29,12 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STORAGE_ROOT = "storage"
 DB_ROOT = "databases"
 
-STATIC_ROOT = os.getenv("STATICFILES_DIR") or os.path.join(BASE_DIR, "static")
+STATIC_ROOT = os.getenv("STATICFILES_DIR") or os.path.join(BASE_DIR, "contentcuration", "static")
 CSV_ROOT = "csvs"
+EXPORT_ROOT = "exports"
+
+BETA_MODE = os.getenv("STUDIO_BETA_MODE")
+RUNNING_TESTS = (sys.argv[1:2] == ['test'] or os.path.basename(sys.argv[0]) == 'pytest')
 
 # hardcoding all this info for now. Potential for shared reference with webpack?
 WEBPACK_LOADER = {
@@ -56,7 +64,7 @@ ALLOWED_HOSTS = ["*"]  # In production, we serve through a file socket, so this 
 # Application definition
 
 INSTALLED_APPS = (
-    'contentcuration',
+    'contentcuration.apps.ContentConfig',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -75,16 +83,40 @@ INSTALLED_APPS = (
     'search',
     'django_s3_storage',
     'webpack_loader',
+    'django_filters',
+    'mathfilters',
 )
 
 SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
 
+REDIS_URL = "redis://:{password}@{endpoint}:/".format(
+    password=os.getenv("CELERY_REDIS_PASSWORD") or "",
+    endpoint=os.getenv("CELERY_BROKER_ENDPOINT") or "localhost:6379")
+
+CACHE_REDIS_DB = os.getenv("CACHE_REDIS_DB") or "1"
+
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
-        'LOCATION': 'studio_db_cache',
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': '{url}{db}'.format(url=REDIS_URL, db=CACHE_REDIS_DB),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        }
     }
 }
+
+# READ-ONLY SETTINGS
+# Set STUDIO_INCIDENT_TYPE to a key from contentcuration.utils.incidents to activate
+INCIDENT_TYPE = os.getenv('STUDIO_INCIDENT_TYPE')
+INCIDENT = INCIDENTS.get(INCIDENT_TYPE)
+SITE_READ_ONLY = INCIDENT and INCIDENT['readonly']
+
+# If Studio is in readonly mode, it will throw a DatabaseWriteError
+# Use a local cache to bypass the readonly property
+if SITE_READ_ONLY:
+    CACHES['default']['BACKEND'] = 'django.core.cache.backends.locmem.LocMemCache'
+    CACHES['default']['LOCATION'] = 'readonly_cache'
+
 
 MIDDLEWARE_CLASSES = (
     # 'django.middleware.cache.UpdateCacheMiddleware',
@@ -145,6 +177,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'readonly.context_processors.readonly',
+                'contentcuration.context_processors.site_variables',
             ],
         },
     },
@@ -158,10 +191,8 @@ WSGI_APPLICATION = 'contentcuration.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql_psycopg2',  # Add 'postgresql_psycopg2', 'mysql', 'sqlite3' or 'oracle'.
-        'NAME': os.getenv("DATA_DB_NAME") or 'gonano',  #  Or path to database file if using sqlite3.
-        # The following settings are not used with sqlite3:
-
+        'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        'NAME': os.getenv("DATA_DB_NAME") or 'kolibri-studio',
         # For dev purposes only
         'USER': os.getenv('DATA_DB_USER') or 'learningequality',
         'PASSWORD': os.getenv('DATA_DB_PASS') or 'kolibri',
@@ -169,7 +200,6 @@ DATABASES = {
         'PORT': '',                      # Set to empty string for default.
     },
 }
-
 
 
 DATABASE_ROUTERS = [
@@ -193,6 +223,11 @@ LOGGING = {
         }
     },
     'loggers': {
+        'command': {
+            'handlers': ['console'],
+            'level': 'DEBUG' if globals().get('DEBUG') else 'INFO',
+            'propagate': True,
+        },
         'django': {
             'handlers': ['file', 'console'],
             'level': 'DEBUG' if globals().get('DEBUG') else 'INFO',
@@ -224,13 +259,15 @@ LOCALE_PATHS = (
     pycountry.LOCALES_DIR,
 )
 
-ugettext = lambda s: s
+
+def ugettext(s): return s
+
+
 LANGUAGES = (
     ('en', ugettext('English')),
     ('es', ugettext('Spanish')),
-    ('es-es', ugettext('Spanish - Spain')),
-    ('es-mx', ugettext('Spanish - Mexico')),
-    ('en-PT', ugettext('English - Pirate')),
+    # ('ar', ugettext('Arabic')), # Uncomment when we have translations
+    # ('en-PT', ugettext('English - Pirate')),
 )
 
 
@@ -253,6 +290,9 @@ ACCOUNT_ACTIVATION_DAYS = 7
 REGISTRATION_OPEN = True
 SITE_ID = 1
 
+# Used for serializing datetime objects.
+DATE_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 # EMAIL_HOST = 'localhost'
 # EMAIL_PORT = 8000
 # EMAIL_HOST_USER = ''
@@ -261,9 +301,6 @@ SITE_ID = 1
 # EMAIL_BACKEND = 'django_mailgun.MailgunBackend'
 # MAILGUN_ACCESS_KEY = 'ACCESS-KEY'
 # MAILGUN_SERVER_NAME = 'SERVER-NAME'
-
-# READ-ONLY SETTINGS
-SITE_READ_ONLY = os.getenv('STUDIO_READ_ONLY') or False
 
 SEND_USER_ACTIVATION_NOTIFICATION_EMAIL = bool(
     os.getenv("SEND_USER_ACTIVATION_NOTIFICATION_EMAIL")
@@ -274,8 +311,8 @@ REGISTRATION_INFORMATION_EMAIL = 'studio-registrations@learningequality.org'
 HELP_EMAIL = 'content@learningequality.org'
 DEFAULT_FROM_EMAIL = 'Kolibri Studio <noreply@learningequality.org>'
 POLICY_EMAIL = 'legal@learningequality.org'
-ACCOUNT_DELETION_BUFFER = 5 # Used to determine how many days a user
-                            # has to undo accidentally deleting account
+ACCOUNT_DELETION_BUFFER = 5  # Used to determine how many days a user
+# has to undo accidentally deleting account
 
 DEFAULT_LICENSE = 1
 
@@ -293,22 +330,29 @@ IGNORABLE_404_URLS = [
 ]
 
 # CELERY CONFIGURATIONS
-BROKER_URL = 'redis://localhost:6379'
-CELERY_RESULT_BACKEND = 'redis://localhost:6379'
-BROKER_URL = "redis://:{password}@{endpoint}:/{db}".format(
-    password=os.getenv("CELERY_REDIS_PASSWORD") or "",
-    endpoint=os.getenv("CELERY_BROKER_ENDPOINT") or "localhost:6379",
-    db=os.getenv("CELERY_REDIS_DB") or "0"
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_REDIS_DB = os.getenv("CELERY_REDIS_DB") or "0"
+CELERY_BROKER_URL = "{url}{db}".format(
+    url=REDIS_URL,
+    db=CELERY_REDIS_DB
 )
-CELERY_RESULT_BACKEND = "redis://:{password}@{endpoint}:/{db}".format(
-    password=os.getenv("CELERY_REDIS_PASSWORD") or "",
-    endpoint=os.getenv("CELERY_RESULT_BACKEND_ENDPOINT") or "localhost:6379",
-    db=os.getenv("CELERY_REDIS_DB") or "0"
-) or CELERY_RESULT_BACKEND
+CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_TIMEZONE = os.getenv("CELERY_TIMEZONE") or 'Africa/Nairobi'
 CELERY_ACCEPT_CONTENT = ['application/json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
+# This is needed for worker update_state calls to work so they can send progress info.
+CELERYD_STATE_DB = '/tmp/celery_state'
+# If this is True, Celery tasks are run synchronously. This is set to True in the unit tests,
+# as it is not possible to correctly test Celery tasks asynchronously currently.
+CELERY_TASK_ALWAYS_EAGER = False
+# This tells Celery to mark a task as started. Otherwise, we would have no way of tracking
+# if the task is running.
+CELERY_TASK_TRACK_STARTED = True
+# We hook into task events to update the Task DB records with the updated state.
+# See celerysignals.py for more info.
+CELERY_WORKER_SEND_TASK_EVENTS = True
 
 # When cleaning up orphan nodes, only clean up any that have been last modified
 # since this date
@@ -322,7 +366,7 @@ AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID') or 'development'
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY') or 'development'
 AWS_S3_BUCKET_NAME = os.getenv('AWS_BUCKET_NAME') or 'content'
 AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL') or 'http://localhost:9000'
-AWS_AUTO_CREATE_BUCKET = True
+AWS_AUTO_CREATE_BUCKET = False
 AWS_S3_FILE_OVERWRITE = True
 AWS_S3_BUCKET_AUTH = False
 
@@ -338,3 +382,6 @@ ORPHANAGE_ROOT_ID = "00000000000000000000000000000000"
 # so we must be very careful to limit code that touches this tree and to carefully check code that does. If we
 # do choose to implement restore of old chefs, we will need to ensure moving nodes does not cause a tree sort.
 DELETED_CHEFS_ROOT_ID = "11111111111111111111111111111111"
+
+# How long we should cache any APIs that return public channel list details, which change infrequently
+PUBLIC_CHANNELS_CACHE_DURATION = 300

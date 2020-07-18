@@ -1,10 +1,10 @@
-import datetime
-from contentcuration.utils.policies import check_policies
-
 from base import BaseTestCase
+
+from contentcuration.utils.policies import check_policies
 
 
 class AuthenticationTestCase(BaseTestCase):
+
     def setUp(self):
         super(AuthenticationTestCase, self).setUp()
         self.base_url = '/channels/{}'.format(self.channel.pk)
@@ -17,7 +17,6 @@ class AuthenticationTestCase(BaseTestCase):
         if they have policies they have not yet agreed to.
         """
         base_url = '/channels/{}'.format(self.channel.pk)
-
         self.channel.viewers.add(self.user)
         self.client.force_login(self.user)
 
@@ -34,6 +33,8 @@ class AuthenticationTestCase(BaseTestCase):
         response = self.get(staging_url, follow=True)
         assert "/accounts/login/?next={}".format(staging_url) == response.redirect_chain[-1][0]
         assert response.status_code == 200
+
+        self.channel.editors.remove(self.user)
 
         self.sign_in()
 
@@ -52,7 +53,7 @@ class AuthenticationTestCase(BaseTestCase):
         assert response.status_code == 200
 
     def test_channel_admin_access(self):
-        admin_url = '/channels/administration/'
+        admin_url = '/administration/'
 
         response = self.get(admin_url, follow=True)
         assert "/accounts/login/?next={}".format(admin_url) == response.redirect_chain[-1][0]
@@ -87,6 +88,8 @@ class AuthenticationTestCase(BaseTestCase):
         assert response.status_code == 200
 
     def test_no_rights_channel_access(self):
+        self.channel.editors.remove(self.user)
+
         self.sign_in()
 
         response = self.get(self.base_url, follow=True)
@@ -101,6 +104,8 @@ class AuthenticationTestCase(BaseTestCase):
         assert response.status_code == 403
 
     def test_view_only_channel_access(self):
+        self.channel.editors.remove(self.user)
+
         self.sign_in()
 
         self.channel.viewers.add(self.user)
@@ -119,7 +124,6 @@ class AuthenticationTestCase(BaseTestCase):
 
     def test_edit_channel_access(self):
         self.sign_in()
-        self.channel.editors.add(self.user)
 
         # we can edit!
         response = self.get(self.base_url, follow=True)

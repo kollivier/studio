@@ -1,59 +1,89 @@
 import logging
-import os.path
+import mimetypes
+import tempfile
 
+from google.cloud.exceptions import InternalServerError
 from google.cloud.storage import Client
 from google.cloud.storage.blob import Blob
-from django.conf import settings
-from django.core.files.storage import Storage
-from django.core.files import File
 
+import backoff
+from django.core.files import File
+from django.core.files.storage import Storage
 
 OLD_STUDIO_STORAGE_PREFIX = "/contentworkshop_content/"
+
+CONTENT_DATABASES_MAX_AGE = 5 # seconds
+
+MAX_RETRY_TIME = 60  # seconds
 
 
 class GoogleCloudStorage(Storage):
 
-    def __init__(self):
+    def __init__(self, client=None):
         from django.conf import settings
-        self.client = Client()
+        self.client = client if client else Client()
         self.bucket = self.client.get_bucket(settings.AWS_S3_BUCKET_NAME)
 
-    def open(self, name, mode="rb"):
+    @classmethod
+    def _determine_content_type(cls, filename):
+        """
+        Guesses the content type of a filename. Returns the mimetype of a file.
+
+        Returns "application/octet-stream" if the type can't be guessed.
+        Raises an AssertionError if filename is not a string.
+        """
+
+        typ, _ = mimetypes.guess_type(filename)
+
+        if not typ:
+            return "application/octet-stream"
+        else:
+            return typ
+
+    def open(self, name, mode="rb", blob_object=None):
+        """
+        open returns a Django File object containing the bytes of name suitable for reading.
+
+        You can pass in an optional 'mode' argument, but is only there for Django Storage class
+        compatibility. It would error out if given any other argument than "rb".
+
+        You can also pass in an object in the blob_object argument. This must have a method called
+        `download_to_file` that accepts as writeable file object as an argument, and writes the
+        bytes to it. (this is mainly used for mocking in tests.)
+        """
         # We don't have any logic for returning the file object in write
         # so just raise an error if we get any mode other than rb
-        assert mode == "rb",\
+        assert mode == "rb", \
             ("Sorry, we can't handle any open mode other than rb."
              " Please use Storage.save() instead.")
 
-        blob = self.bucket.get_blob(name)
-
-        # take advantage of the fact that we only
-        # write a file once, and that GCS returns the MD5
-        # hash as part of the metadata.
-
-        # See if a file with a matching MD5 hash is already
-        # present. If so, just return that.
-        tmp_filename = os.path.join("/tmp", blob.md5_hash)
-
-        # the md5 hash from gcloud storage encoded in base64, which may not be
-        # compatible as a filesystem name. Change it to hex.
-        tmp_filename = tmp_filename.decode("base64").encode("hex")
-
-        if os.path.exists(tmp_filename):
-            f = open(tmp_filename)
-
-        # If there's no such file, then download that file
-        # from GCS.
+        if not blob_object:
+            # the old studio storage had a prefix if /contentworkshop_content/
+            # before the path; remove that first before passing it in to GCS
+            # TODO (aron): remove hack once we've migrated all File models to remove the prefix
+            if name.startswith(OLD_STUDIO_STORAGE_PREFIX):
+                name = name.split(OLD_STUDIO_STORAGE_PREFIX).pop()
+            blob = self.bucket.get_blob(name)
         else:
-            with open(tmp_filename, "wb") as fobj:
-                blob.download_to_file(fobj)
+            blob = blob_object
 
-            # reopen the file we just wrote, this time in read mode
-            f = open(tmp_filename)
+        fobj = tempfile.NamedTemporaryFile()
+        blob.download_to_file(fobj)
+        # flush it to disk
+        fobj.flush()
+        fobj.seek(0)
 
-        return File(f)
+        django_file = File(fobj)
+        django_file.just_downloaded = True
+        return django_file
 
+    @backoff.on_exception(backoff.expo, InternalServerError, max_time=MAX_RETRY_TIME)
     def exists(self, name):
+        """
+        Check if a resource with the given name exists. Has a maximum backoff time of MAX_RETRY_TIME.
+        :param name: the name of the resource to check
+        :return: True if the resource with the name exists, or False otherwise.
+        """
         blob = self.bucket.get_blob(name)
         return blob
 
@@ -61,12 +91,32 @@ class GoogleCloudStorage(Storage):
         blob = self.bucket.get_blob(name)
         return blob.size
 
-    def save(self, name, fobj, max_length=None):
-        blob = Blob(name, self.bucket)
+    def save(self, name, fobj, max_length=None, blob_object=None):
+        if not blob_object:
+            blob = Blob(name, self.bucket)
+        else:
+            blob = blob_object
+
         # force the current file to be at file location 0, to
         # because that's what google wants
+
+        # determine the current file's mimetype based on the name
+        content_type = self._determine_content_type(name)
+
         fobj.seek(0)
-        blob.upload_from_file(fobj)
+
+        if self._is_file_empty(fobj):
+            logging.warning("Stopping the upload of an empty file: {}".format(name))
+            return name
+
+        # set a max-age of 5 if we're uploading to content/databases
+        if self.is_database_file(name):
+            blob.cache_control = 'private, max-age={}, no-transform'.format(CONTENT_DATABASES_MAX_AGE)
+
+        blob.upload_from_file(
+            fobj,
+            content_type=content_type,
+        )
         return name
 
     def url(self, name):
@@ -110,4 +160,31 @@ class GoogleCloudStorage(Storage):
         return name
 
     def generate_filename(self, filename):
-        raise NotImplementedError
+        # TODO(aron): can we move the generate_object_storage_name logic to here?
+        return filename
+
+    # Aron: note: move to a studio_storage object, since this is studio-specific logic
+    @staticmethod
+    def is_database_file(filename):
+        return filename.endswith(".sqlite3")
+
+    @staticmethod
+    def _is_file_empty(fobj):
+        """
+        Return True if the file is empty, i.e. it has a length of 0. Raises an error
+        if the file object does not have the seek() or peek() method.
+        """
+
+        # Check if our fobj has the peek method. If so, just use that to check
+        # one byte ahead.
+        try:
+            byt = fobj.peek(1)
+        except AttributeError:
+            # emulate the peek method by saving our current location, reading
+            # one byte, then returning to the saved location. It would've been
+            # nice to use the os.SEEK_CUR argument to seek(), but that doesn't
+            # work on StringIO objects.
+            current_location = fobj.tell()
+            byt = fobj.read(1)
+            fobj.seek(current_location)
+        return len(byt) == 0

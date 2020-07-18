@@ -1,119 +1,71 @@
-import md5
 import os
 import random
 import string
 import tempfile
-from cStringIO import StringIO
 
 import pytest
-from django.conf import settings
-from django.core.files.storage import default_storage
-from django.core.management import call_command
-from django.test import TestCase
-from django.test.utils import override_settings
-from mixer.backend.django import mixer
-from mock import patch
-
 from base import StudioTestCase
-from contentcuration import models as cc
-from contentcuration.management.commands.exportchannel import (MIN_SCHEMA_VERSION,
-                                                               create_content_database)
+from django.test.utils import override_settings
 from kolibri_content import models
 from kolibri_content.router import using_content_database
+from mock import patch
+
+from .testdata import create_studio_file
+from .testdata import exercise
+from .testdata import slideshow
+from .testdata import topic
+from .testdata import video
+from contentcuration import models as cc
+from contentcuration.tests.testutils import mixer
+from contentcuration.utils.publish import convert_channel_thumbnail
+from contentcuration.utils.publish import create_bare_contentnode
+from contentcuration.utils.publish import create_content_database
+from contentcuration.utils.publish import create_slideshow_manifest
+from contentcuration.utils.publish import fill_published_fields
+from contentcuration.utils.publish import map_prerequisites
+from contentcuration.utils.publish import MIN_SCHEMA_VERSION
+from contentcuration.utils.publish import set_channel_icon_encoding
 
 pytestmark = pytest.mark.django_db
 
 
-def video():
-    """
-    Create a video content kind entry.
-    """
-    return mixer.blend(cc.ContentKind, kind='video')
-
-
-def preset_video():
-    """
-    Create a video format preset.
-    """
-    return mixer.blend(cc.FormatPreset, id='mp4', kind=video())
-
-
-def topic():
-    """
-    Create a topic content kind.
-    """
-    return mixer.blend(cc.ContentKind, kind='topic')
-
-
-def exercise():
-    """
-    Create a topic content kind.
-    """
-    return mixer.blend(cc.ContentKind, kind='exercise')
-
-
-def preset_exercise():
-    """
-    Create an exercise format preset.
-    """
-    return mixer.blend(cc.FormatPreset, id='exercise', kind=exercise())
-
-
-def fileformat_perseus():
-    """
-    Create a perseus FileFormat entry.
-    """
-    return mixer.blend(cc.FileFormat, extension='perseus', mimetype='application/exercise')
-
-
-def fileformat_mp4():
-    """
-    Create an mp4 FileFormat entry.
-    """
-    return mixer.blend(cc.FileFormat, extension='mp4', mimetype='application/video')
-
-
-def license_wtfpl():
-    """
-    Create a license object called WTF License.
-    """
-    return mixer.blend(cc.License, license_name="WTF License")
-
-
 def fileobj_video(contents=None):
     """
-    Create an "mp4" video file on storage, and then create a File model pointing to it.
-
-    if contents is given and is a string, then write said contents to the file. If not given,
-    a random string is generated and set as the contents of the file.
+    Create an mp4 video file in storage and then create a File model from it.
+    If contents is given and is a string, then write said contents to the file.
+    If not given, a random string is generated and set as the contents of the file.
     """
     if contents:
         filecontents = contents
     else:
         filecontents = "".join(random.sample(string.printable, 20))
+    # leverage existing function in testdata
+    file_data = create_studio_file(filecontents, preset='high_res_video', ext='mp4')
+    return file_data['db_file']
 
-    fileobj = StringIO(filecontents)
-    digest = md5.new(filecontents).hexdigest()
-    filename = "{}.mp4".format(digest)
-    storage_file_path = cc.generate_object_storage_name(digest, filename)
 
-    # Write out the file bytes on to object storage, with a filename specified with randomfilename
-    default_storage.save(storage_file_path, fileobj)
-
-    # then create a File object with that
-    db_file_obj = mixer.blend(cc.File, file_format=fileformat_mp4(), preset=preset_video(), file_on_disk=storage_file_path)
-
-    return db_file_obj
+def thumbnail():
+    image_data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+    file_data = create_studio_file(image_data.decode('base64'), preset='channel_thumbnail', ext='png')
+    return file_data['db_file']
 
 
 def assessment_item():
-    answers = "[{\"correct\": false, \"answer\": \"White Rice\", \"help_text\": \"\"}, {\"correct\": true, \"answer\": \"Brown Rice\", \"help_text\": \"\"}, {\"correct\": false, \"answer\": \"Rice Krispies\", \"help_text\": \"\"}]"
-    return mixer.blend(cc.AssessmentItem, question='Which rice is the healthiest?', type='single_selection', answers=answers)
+    answers = "[{\"correct\": false, \"answer\": \"White Rice\", \"help_text\": \"\"}, " \
+              "{\"correct\": true, \"answer\": \"Brown Rice\", \"help_text\": \"\"}, " \
+              "{\"correct\": false, \"answer\": \"Rice Krispies\", \"help_text\": \"\"}]"
+    return mixer.blend(cc.AssessmentItem, question='Which rice is the healthiest?',
+                       type='single_selection', answers=answers)
 
 
 def assessment_item2():
-    answers = "[{\"correct\": true, \"answer\": \"Eggs\", \"help_text\": \"\"}, {\"correct\": true, \"answer\": \"Tofu\", \"help_text\": \"\"}, {\"correct\": true, \"answer\": \"Meat\", \"help_text\": \"\"}, {\"correct\": true, \"answer\": \"Beans\", \"help_text\": \"\"}, {\"correct\": false, \"answer\": \"Rice\", \"help_text\": \"\"}]"
-    return mixer.blend(cc.AssessmentItem, question='Which of the following are proteins?', type='multiple_selection', answers=answers)
+    answers = "[{\"correct\": true, \"answer\": \"Eggs\", \"help_text\": \"\"}, " \
+              "{\"correct\": true, \"answer\": \"Tofu\", \"help_text\": \"\"}, " \
+              "{\"correct\": true, \"answer\": \"Meat\", \"help_text\": \"\"}, " \
+              "{\"correct\": true, \"answer\": \"Beans\", \"help_text\": \"\"}, " \
+              "{\"correct\": false, \"answer\": \"Rice\", \"help_text\": \"\"}]"
+    return mixer.blend(cc.AssessmentItem, question='Which of the following are proteins?',
+                       type='multiple_selection', answers=answers)
 
 
 def assessment_item3():
@@ -123,7 +75,12 @@ def assessment_item3():
 
 def assessment_item4():
     answers = "[{\"correct\": true, \"answer\": 20, \"help_text\": \"\"}]"
-    return mixer.blend(cc.AssessmentItem, question='How many minutes does it take to cook rice?', type='input_question', answers=answers)
+    return mixer.blend(cc.AssessmentItem, question='How many minutes does it take to cook rice?',
+                       type='input_question', answers=answers)
+
+
+def description():
+    return "".join(random.sample(string.printable, 20))
 
 
 def channel():
@@ -132,7 +89,11 @@ def channel():
         level1 = mixer.blend(cc.ContentNode, parent=root, kind=topic())
         level2 = mixer.blend(cc.ContentNode, parent=level1, kind=topic())
         leaf = mixer.blend(cc.ContentNode, parent=level2, kind=video())
-        leaf2 = mixer.blend(cc.ContentNode, parent=level2, kind=exercise(), title='EXERCISE 1', extra_fields="{\"mastery_model\":\"do_all\",\"randomize\":true}")
+        leaf2 = mixer.blend(cc.ContentNode, parent=level2, kind=exercise(), title='EXERCISE 1', extra_fields={
+            'mastery_model': 'do_all',
+            'randomize': True
+        })
+        mixer.blend(cc.ContentNode, parent=level2, kind=slideshow(), title="SLIDESHOW 1", extra_fields={})
 
         video_file = fileobj_video()
         video_file.contentnode = leaf
@@ -154,38 +115,44 @@ def channel():
         item4.contentnode = leaf2
         item4.save()
 
-    channel = mixer.blend(cc.Channel, main_tree=root, name='testchannel', thumbnail="")
+    channel = mixer.blend(cc.Channel, main_tree=root, name='testchannel', thumbnail=str(thumbnail()))
 
     return channel
 
 
 CONTENT_DATABASE_DIR_TEMP = tempfile.mkdtemp()
 
+
 @override_settings(
     CONTENT_DATABASE_DIR=CONTENT_DATABASE_DIR_TEMP,
 )
 class ExportChannelTestCase(StudioTestCase):
+
     @classmethod
     def setUpClass(cls):
         super(ExportChannelTestCase, cls).setUpClass()
-        fh, output_db = tempfile.mkstemp(suffix=".sqlite3",dir=CONTENT_DATABASE_DIR_TEMP)
+        fh, output_db = tempfile.mkstemp(suffix=".sqlite3", dir=CONTENT_DATABASE_DIR_TEMP)
         output_db = output_db
         output_db_alias = os.path.splitext(os.path.basename(output_db))[0]
+
         class testing_content_database(using_content_database):
+
             def __init__(self, alias):
                 self.alias = output_db_alias
 
             def __exit__(self, exc_type, exc_value, traceback):
                 return
-        cls.patch_using = patch('contentcuration.management.commands.exportchannel.using_content_database.__new__', return_value=testing_content_database('alias'))
+        cls.patch_using = patch('contentcuration.utils.publish.using_content_database.__new__',
+                                return_value=testing_content_database('alias'))
         cls.patch_using.start()
-        cls.patch_copy_db = patch('contentcuration.management.commands.exportchannel.save_export_database')
+        cls.patch_copy_db = patch('contentcuration.utils.publish.save_export_database')
         cls.patch_copy_db.start()
 
     def setUp(self):
         super(ExportChannelTestCase, self).setUp()
-        content_channel = channel()
-        create_content_database(content_channel.id, True, None, True)
+        self.content_channel = channel()
+        set_channel_icon_encoding(self.content_channel)
+        create_content_database(self.content_channel, True, None, True)
 
     def tearDown(self):
         super(ExportChannelTestCase, self).tearDown()
@@ -221,8 +188,59 @@ class ExportChannelTestCase(StudioTestCase):
         for file in models.File.objects.all().prefetch_related('local_file'):
             self.assertEqual(file.file_size, file.local_file.file_size)
 
+    def test_channel_icon_encoding(self):
+        self.assertIsNotNone(self.content_channel.icon_encoding)
+
     @classmethod
     def tearDownClass(cls):
         super(ExportChannelTestCase, cls).tearDownClass()
         cls.patch_using.stop()
         cls.patch_copy_db.stop()
+
+
+class ChannelExportUtilityFunctionTestCase(StudioTestCase):
+    def test_convert_channel_thumbnail_empty_thumbnail(self):
+        channel = cc.Channel.objects.create()
+        self.assertEqual("", convert_channel_thumbnail(channel))
+
+    def test_convert_channel_thumbnail_static_thumbnail(self):
+        channel = cc.Channel.objects.create(thumbnail="/static/kolibri_flapping_bird.png")
+        self.assertEqual("", convert_channel_thumbnail(channel))
+
+    def test_convert_channel_thumbnail_encoding_valid(self):
+        channel = cc.Channel.objects.create(thumbnail="/content/kolibri_flapping_bird.png", thumbnail_encoding={"base64": "flappy_bird"})
+        self.assertEqual("flappy_bird", convert_channel_thumbnail(channel))
+
+    def test_convert_channel_thumbnail_encoding_invalid(self):
+        with patch("contentcuration.utils.publish.get_thumbnail_encoding", return_value="this is a test"):
+            channel = cc.Channel.objects.create(thumbnail="/content/kolibri_flapping_bird.png", thumbnail_encoding={})
+            self.assertEquals("this is a test", convert_channel_thumbnail(channel))
+
+    def test_create_slideshow_manifest(self):
+        content_channel = cc.Channel.objects.create()
+        ccnode = cc.ContentNode.objects.create(kind_id=slideshow(), extra_fields={})
+        kolibrinode = create_bare_contentnode(ccnode, ccnode.language, content_channel.id, content_channel.name)
+        create_slideshow_manifest(ccnode, kolibrinode)
+        manifest_collection = cc.File.objects.filter(contentnode=ccnode, preset_id=u"slideshow_manifest")
+        assert len(manifest_collection) == 1
+
+
+class ChannelExportPrerequisiteTestCase(StudioTestCase):
+    def test_nonexistent_prerequisites(self):
+        channel = cc.Channel.objects.create()
+        node1 = cc.ContentNode.objects.create(kind_id="exercise", parent_id=channel.main_tree.pk)
+        exercise = cc.ContentNode.objects.create(kind_id="exercise")
+
+        cc.PrerequisiteContentRelationship.objects.create(target_node=exercise, prerequisite=node1)
+        map_prerequisites(node1)
+
+
+class ChannelExportPublishedData(StudioTestCase):
+    def test_fill_published_fields(self):
+        version_notes = description()
+        channel = cc.Channel.objects.create()
+        channel.last_published
+        fill_published_fields(channel, version_notes)
+        self.assertTrue(channel.published_data)
+        self.assertIsNotNone(channel.published_data.get(0))
+        self.assertEqual(channel.published_data[0]['version_notes'], version_notes)
