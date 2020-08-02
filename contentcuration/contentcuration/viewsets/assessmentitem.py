@@ -34,8 +34,8 @@ exercise_image_filename_regex = re.compile(
 
 
 class AssessmentItemFilter(RequiredFilterSet):
-    id__in = UUIDInFilter(name="id")
-    contentnode__in = UUIDInFilter(name="contentnode")
+    id__in = UUIDInFilter(field_name="id")
+    contentnode__in = UUIDInFilter(field_name="contentnode")
 
     class Meta:
         model = AssessmentItem

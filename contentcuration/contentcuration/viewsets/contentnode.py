@@ -53,7 +53,7 @@ def get_orphan_tree_id():
 
 
 class ContentNodeFilter(RequiredFilterSet):
-    id__in = UUIDInFilter(name="id")
+    id__in = UUIDInFilter(field_name="id")
     channel_root = CharFilter(method="filter_channel_root")
 
     class Meta:

@@ -21,9 +21,9 @@ from contentcuration.viewsets.sync.constants import FILE
 
 
 class FileFilter(RequiredFilterSet):
-    id__in = UUIDInFilter(name="id")
-    contentnode__in = UUIDInFilter(name="contentnode")
-    assessment_item__in = UUIDInFilter(name="assessment_item")
+    id__in = UUIDInFilter(field_name="id")
+    contentnode__in = UUIDInFilter(field_name="contentnode")
+    assessment_item__in = UUIDInFilter(field_name="assessment_item")
 
     class Meta:
         model = File
