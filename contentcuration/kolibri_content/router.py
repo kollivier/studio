@@ -155,6 +155,7 @@ class using_content_database(object):
 
     def __exit__(self, exc_type, exc_value, traceback):
         set_active_content_database(self.previous_alias)
+        del connections.databases[self.alias]
 
     def __call__(self, querying_func):
         # allow using the context manager as a decorator

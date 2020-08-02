@@ -7,6 +7,7 @@ import string
 import tempfile
 
 import pytest
+from django.db import connections
 from kolibri_content import models
 from kolibri_content.router import set_active_content_database
 from mock import patch
@@ -195,10 +196,12 @@ class ChannelExportUtilityFunctionTestCase(StudioTestCase):
         prepare_export_database(self.output_db)
 
     def tearDown(self):
-        super(ChannelExportUtilityFunctionTestCase, self).tearDown()
         set_active_content_database(None)
         if os.path.exists(self.output_db):
             os.remove(self.output_db)
+        if self.output_db in connections.databases:
+            del connections.databases[self.output_db]
+        super(ChannelExportUtilityFunctionTestCase, self).tearDown()
 
     def test_convert_channel_thumbnail_empty_thumbnail(self):
         channel = cc.Channel.objects.create()
@@ -243,6 +246,8 @@ class ChannelExportPrerequisiteTestCase(StudioTestCase):
     def tearDown(self):
         super(ChannelExportPrerequisiteTestCase, self).tearDown()
         set_active_content_database(None)
+        if self.output_db in connections.databases:
+            del connections.databases[self.output_db]
         if os.path.exists(self.output_db):
             os.remove(self.output_db)
 

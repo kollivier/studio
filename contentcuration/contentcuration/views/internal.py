@@ -130,14 +130,14 @@ def api_file_upload(request):
         fobj = request.FILES["file"]
         checksum, ext = fobj._name.split(".")
         try:
-            request.user.check_staged_space(fobj._size, checksum)
+            request.user.check_staged_space(fobj.size, checksum)
         except Exception as e:
             return HttpResponseForbidden(str(e))
 
         write_file_to_storage(fobj, check_valid=True)
         StagedFile.objects.get_or_create(
             checksum=checksum,
-            file_size=fobj._size,
+            file_size=fobj.size,
             uploaded_by=request.user
         )
 

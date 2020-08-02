@@ -606,7 +606,6 @@ def prepare_export_database(tempdb):
     # we can add code to handle updating an existing db explicitly if we choose to support that work flow.
     call_command("migrate",
                  "content",
-                 run_syncdb=True,
                  database=get_active_content_database(),
                  interactive=False)
     logging.info("Prepared the export database.")

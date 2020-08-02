@@ -71,7 +71,6 @@ class AncestorArrayAgg(AncestorAnnotation):
                 When(condition=WhenQ(*ancestor_condition), then=cte.col.pk),
                 default=Value(None),
             ),
-            output_field=CharField(),
         )
 
 

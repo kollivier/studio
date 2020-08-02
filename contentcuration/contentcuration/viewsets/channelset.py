@@ -93,7 +93,6 @@ class ChannelSetViewSet(ValuesViewset):
             channels=DistinctNotNullArrayAgg(
                 'secret_token__channels__id',
                 filter=Q(secret_token__channels__main_tree__published=True, secret_token__channels__deleted=False),
-                output_field=CharField()
             )
         )
         return queryset

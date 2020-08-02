@@ -53,7 +53,7 @@ class UUIDField(models.CharField):
                 raise TypeError(self.error_messages['invalid'] % {'value': value})
         return value.hex
 
-    def from_db_value(self, value, expression, connection, context):
+    def from_db_value(self, value, expression, connection):
         return self.to_python(value)
 
     def to_python(self, value):
