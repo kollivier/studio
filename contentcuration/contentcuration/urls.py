@@ -171,7 +171,7 @@ router.register(r'admin-users', AdminUserViewSet, base_name='admin-users')
 
 urlpatterns = [
     url(r'^$', views.base, name='base'),
-    url(r'^admin/', include(admin.site.urls)),
+    url(r'^admin/', admin.site.urls),
     url(r'^api/', include(router.urls)),
     url(r'^api/publish_channel/$', views.publish_channel, name='publish_channel'),
     url(r'^api-auth/', include('rest_framework.urls', namespace='rest_framework')),

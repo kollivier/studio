@@ -93,9 +93,11 @@ def create_content_database(channel, force, user_id, force_exercises, task_objec
         prepare_export_database(tempdb)
         if task_object:
             task_object.update_state(state='STARTED', meta={'progress': 10.0})
-        map_channel_to_kolibri_channel(channel)
         map_content_nodes(channel.main_tree, channel.language, channel.id, channel.name, user_id=user_id,
                           force_exercises=force_exercises, task_object=task_object, starting_percent=10.0)
+        # Due to Django 2's stricter foreign key checking and the fact that Channel.root cannot be null,
+        # we need to create the channel object after the root node has been created in the Kolibri db.
+        map_channel_to_kolibri_channel(channel)
         # It should be at this percent already, but just in case.
         if task_object:
             task_object.update_state(state='STARTED', meta={'progress': 90.0})
@@ -594,17 +596,19 @@ def map_tags_to_node(kolibrinode, ccnode):
         t, _new = kolibrimodels.ContentTag.objects.get_or_create(pk=tag.pk, tag_name=tag.tag_name)
         tags_to_add.append(t)
 
-    kolibrinode.tags = tags_to_add
+    kolibrinode.tags.set(tags_to_add)
     kolibrinode.save()
 
 
 def prepare_export_database(tempdb):
-    call_command("flush", "--noinput", database=get_active_content_database())  # clears the db!
+    # Django 2 note: Calling flush on the empty db was leading to missing table errors, probably caused by more
+    # strict db integrity checking, so I removed the call. Currently, tempdb is always a brand new db, and I think
+    # we can add code to handle updating an existing db explicitly if we choose to support that work flow.
     call_command("migrate",
                  "content",
                  run_syncdb=True,
                  database=get_active_content_database(),
-                 noinput=True)
+                 interactive=False)
     logging.info("Prepared the export database.")
 
 

@@ -6,7 +6,7 @@ from builtins import str
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TestCase

@@ -9,7 +9,7 @@ from django.contrib.auth.views import PasswordResetView
 from django.contrib.sites.models import Site
 from django.contrib.sites.shortcuts import get_current_site
 from django.core.mail import send_mail
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from django.http import HttpResponse
 from django.http import HttpResponseBadRequest
 from django.http import HttpResponseForbidden
@@ -124,7 +124,7 @@ def logout(request):
 
 
 def policies(request):
-    if request.user.is_anonymous() or request.GET.get('all'):
+    if request.user.is_anonymous or request.GET.get('all'):
         policies = get_latest_policies()
     else:
         policies = check_policies(request.user)

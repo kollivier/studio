@@ -1,5 +1,5 @@
 from builtins import object
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 
 from ..base import BaseAPITestCase
 from contentcuration.models import ContentNode

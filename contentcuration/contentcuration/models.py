@@ -115,7 +115,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(_('staff status'), default=False,
                                    help_text=_('Designates whether the user can log into this admin site.'))
     date_joined = models.DateTimeField(_('date joined'), default=timezone.now)
-    clipboard_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='user_clipboard')
+    clipboard_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='user_clipboard', on_delete=models.CASCADE)
     preferences = models.TextField(default=DEFAULT_USER_PREFERENCES)
     disk_space = models.FloatField(default=524288000, help_text=_('How many bytes a user can upload'))
 
@@ -634,13 +634,13 @@ class Channel(models.Model):
         help_text=_("Users with view only rights"),
         blank=True,
     )
-    language = models.ForeignKey('Language', null=True, blank=True, related_name='channel_language')
-    trash_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_trash')
-    clipboard_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_clipboard')
-    main_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_main')
-    staging_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_staging')
-    chef_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_chef')
-    previous_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_previous')
+    language = models.ForeignKey('Language', null=True, blank=True, related_name='channel_language', on_delete=models.CASCADE)
+    trash_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_trash', on_delete=models.CASCADE)
+    clipboard_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_clipboard', on_delete=models.CASCADE)
+    main_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_main', on_delete=models.CASCADE)
+    staging_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_staging', on_delete=models.CASCADE)
+    chef_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_chef', on_delete=models.CASCADE)
+    previous_tree = models.ForeignKey('ContentNode', null=True, blank=True, related_name='channel_previous', on_delete=models.CASCADE)
     bookmarked_by = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         related_name='bookmarked_channels',
@@ -902,7 +902,7 @@ class ChannelSet(models.Model):
 class ContentTag(models.Model):
     id = UUIDField(primary_key=True, default=uuid.uuid4)
     tag_name = models.CharField(max_length=50)
-    channel = models.ForeignKey('Channel', related_name='tags', blank=True, null=True, db_index=True)
+    channel = models.ForeignKey('Channel', related_name='tags', blank=True, null=True, db_index=True, on_delete=models.CASCADE)
 
     def __str__(self):
         return self.tag_name
@@ -979,15 +979,15 @@ class ContentNode(MPTTModel, models.Model):
 
     title = models.CharField(max_length=200, blank=True)
     description = models.TextField(blank=True)
-    kind = models.ForeignKey('ContentKind', related_name='contentnodes', db_index=True)
-    license = models.ForeignKey('License', null=True, blank=True)
+    kind = models.ForeignKey('ContentKind', related_name='contentnodes', db_index=True, on_delete=models.CASCADE)
+    license = models.ForeignKey('License', null=True, blank=True, on_delete=models.CASCADE)
     license_description = models.CharField(max_length=400, null=True, blank=True)
     prerequisite = models.ManyToManyField('self', related_name='is_prerequisite_of',
                                           through='PrerequisiteContentRelationship', symmetrical=False, blank=True)
     is_related = models.ManyToManyField('self', related_name='relate_to', through='RelatedContentRelationship',
                                         symmetrical=False, blank=True)
-    language = models.ForeignKey('Language', null=True, blank=True, related_name='content_language')
-    parent = TreeForeignKey('self', null=True, blank=True, related_name='children', db_index=True)
+    language = models.ForeignKey('Language', null=True, blank=True, related_name='content_language', on_delete=models.CASCADE)
+    parent = TreeForeignKey('self', null=True, blank=True, related_name='children', db_index=True, on_delete=models.CASCADE)
     tags = models.ManyToManyField(ContentTag, symmetrical=False, related_name='tagged_content', blank=True)
     sort_order = models.FloatField(max_length=50, default=1, verbose_name=_("sort order"),
                                    help_text=_("Ascending, lowest number shown first"))
@@ -1348,7 +1348,7 @@ class FormatPreset(models.Model):
     subtitle = models.BooleanField(default=False)
     display = models.BooleanField(default=True)  # Render on client side
     order = models.IntegerField(default=0)
-    kind = models.ForeignKey(ContentKind, related_name='format_presets', null=True)
+    kind = models.ForeignKey(ContentKind, related_name='format_presets', null=True, on_delete=models.CASCADE)
     allowed_formats = models.ManyToManyField(FileFormat, blank=True)
 
     def __str__(self):
@@ -1406,7 +1406,7 @@ class AssessmentItem(models.Model):
     answers = models.TextField(default="[]")
     order = models.IntegerField(default=1)
     contentnode = models.ForeignKey('ContentNode', related_name="assessment_items", blank=True, null=True,
-                                    db_index=True)
+                                    db_index=True, on_delete=models.CASCADE)
     assessment_id = UUIDField(primary_key=False, default=uuid.uuid4, editable=False)
     raw_data = models.TextField(blank=True)
     source_url = models.CharField(max_length=400, blank=True, null=True)
@@ -1416,7 +1416,7 @@ class AssessmentItem(models.Model):
 
 class SlideshowSlide(models.Model):
     contentnode = models.ForeignKey('ContentNode', related_name="slideshow_slides", blank=True, null=True,
-                                    db_index=True)
+                                    db_index=True, on_delete=models.CASCADE)
     sort_order = models.FloatField(default=1.0)
     metadata = JSONField(default={})
 
@@ -1427,7 +1427,7 @@ class StagedFile(models.Model):
     """
     checksum = models.CharField(max_length=400, blank=True, db_index=True)
     file_size = models.IntegerField(blank=True, null=True)
-    uploaded_by = models.ForeignKey(User, related_name='staged_files', blank=True, null=True)
+    uploaded_by = models.ForeignKey(User, related_name='staged_files', blank=True, null=True, on_delete=models.CASCADE)
 
 
 class File(models.Model):
@@ -1440,15 +1440,15 @@ class File(models.Model):
     file_size = models.IntegerField(blank=True, null=True)
     file_on_disk = models.FileField(upload_to=object_storage_name, storage=default_storage, max_length=500,
                                     blank=True)
-    contentnode = models.ForeignKey(ContentNode, related_name='files', blank=True, null=True, db_index=True)
-    assessment_item = models.ForeignKey(AssessmentItem, related_name='files', blank=True, null=True, db_index=True)
-    slideshow_slide = models.ForeignKey(SlideshowSlide, related_name='files', blank=True, null=True, db_index=True)
-    file_format = models.ForeignKey(FileFormat, related_name='files', blank=True, null=True, db_index=True)
-    preset = models.ForeignKey(FormatPreset, related_name='files', blank=True, null=True, db_index=True)
-    language = models.ForeignKey(Language, related_name='files', blank=True, null=True)
+    contentnode = models.ForeignKey(ContentNode, related_name='files', blank=True, null=True, db_index=True, on_delete=models.CASCADE)
+    assessment_item = models.ForeignKey(AssessmentItem, related_name='files', blank=True, null=True, db_index=True, on_delete=models.CASCADE)
+    slideshow_slide = models.ForeignKey(SlideshowSlide, related_name='files', blank=True, null=True, db_index=True, on_delete=models.CASCADE)
+    file_format = models.ForeignKey(FileFormat, related_name='files', blank=True, null=True, db_index=True, on_delete=models.CASCADE)
+    preset = models.ForeignKey(FormatPreset, related_name='files', blank=True, null=True, db_index=True, on_delete=models.CASCADE)
+    language = models.ForeignKey(Language, related_name='files', blank=True, null=True, on_delete=models.CASCADE)
     original_filename = models.CharField(max_length=255, blank=True)
     source_url = models.CharField(max_length=400, blank=True, null=True)
-    uploaded_by = models.ForeignKey(User, related_name='files', blank=True, null=True)
+    uploaded_by = models.ForeignKey(User, related_name='files', blank=True, null=True, on_delete=models.CASCADE)
 
     class Admin:
         pass
@@ -1519,8 +1519,8 @@ class PrerequisiteContentRelationship(models.Model):
     """
     Predefine the prerequisite relationship between two ContentNode objects.
     """
-    target_node = models.ForeignKey(ContentNode, related_name='%(app_label)s_%(class)s_target_node')
-    prerequisite = models.ForeignKey(ContentNode, related_name='%(app_label)s_%(class)s_prerequisite')
+    target_node = models.ForeignKey(ContentNode, related_name='%(app_label)s_%(class)s_target_node', on_delete=models.CASCADE)
+    prerequisite = models.ForeignKey(ContentNode, related_name='%(app_label)s_%(class)s_prerequisite', on_delete=models.CASCADE)
 
     class Meta:
         unique_together = ['target_node', 'prerequisite']
@@ -1552,8 +1552,8 @@ class RelatedContentRelationship(models.Model):
     """
     Predefine the related relationship between two ContentNode objects.
     """
-    contentnode_1 = models.ForeignKey(ContentNode, related_name='%(app_label)s_%(class)s_1')
-    contentnode_2 = models.ForeignKey(ContentNode, related_name='%(app_label)s_%(class)s_2')
+    contentnode_1 = models.ForeignKey(ContentNode, related_name='%(app_label)s_%(class)s_1', on_delete=models.CASCADE)
+    contentnode_2 = models.ForeignKey(ContentNode, related_name='%(app_label)s_%(class)s_2', on_delete=models.CASCADE)
 
     class Meta:
         unique_together = ['contentnode_1', 'contentnode_2']
@@ -1570,7 +1570,7 @@ class RelatedContentRelationship(models.Model):
 
 
 class Exercise(models.Model):
-    contentnode = models.ForeignKey('ContentNode', related_name="exercise", null=True)
+    contentnode = models.ForeignKey('ContentNode', related_name="exercise", null=True, on_delete=models.CASCADE)
     mastery_model = models.CharField(max_length=200, default=exercises.DO_ALL, choices=exercises.MASTERY_MODELS)
 
 
@@ -1609,5 +1609,5 @@ class Task(models.Model):
     created = models.DateTimeField(default=timezone.now)
     status = models.CharField(max_length=10)
     is_progress_tracking = models.BooleanField(default=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="task")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="task", on_delete=models.CASCADE)
     metadata = JSONField()

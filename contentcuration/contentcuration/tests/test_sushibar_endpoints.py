@@ -7,7 +7,7 @@ import os
 
 from builtins import str
 from builtins import zip
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 
 from .base import BaseAPITestCase
 from contentcuration import models as cc

@@ -4,7 +4,7 @@ from __future__ import division
 import json
 from datetime import datetime
 
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from past.utils import old_div
 
 from .base import BaseAPITestCase

@@ -8,7 +8,7 @@ import string
 from builtins import range
 from builtins import str
 from builtins import zip
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from django.db.utils import DataError
 from mixer.backend.django import mixer
 from past.utils import old_div

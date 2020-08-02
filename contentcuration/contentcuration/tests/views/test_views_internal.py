@@ -8,7 +8,7 @@ import uuid
 
 from builtins import filter
 from builtins import zip
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from django.test.utils import override_settings
 from mixer.main import mixer
 from mock import patch

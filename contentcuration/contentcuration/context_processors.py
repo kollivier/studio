@@ -6,4 +6,4 @@ def site_variables(request):
             'BETA_MODE': settings.BETA_MODE,
             'DEPRECATED': "contentworkshop" in request.get_host(),
             'DEBUG': settings.DEBUG,
-            'LOGGED_IN': not request.user.is_anonymous()}
+            'LOGGED_IN': not request.user.is_anonymous}

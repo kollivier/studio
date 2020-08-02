@@ -2,7 +2,7 @@ from __future__ import absolute_import
 
 import pytest
 from django.core.files.storage import default_storage
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from le_utils.constants import content_kinds
 
 from .base import BaseAPITestCase

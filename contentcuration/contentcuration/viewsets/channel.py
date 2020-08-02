@@ -91,7 +91,7 @@ class ChannelFilter(RequiredFilterSet):
         )
 
     def get_user_queryset(self):
-        user_id = not self.request.user.is_anonymous() and self.request.user.id
+        user_id = not self.request.user.is_anonymous and self.request.user.id
         return User.objects.filter(id=user_id)
 
     def filter_deleted(self, queryset, name, value):
@@ -402,8 +402,8 @@ class ChannelViewSet(ValuesViewset):
     }
 
     def get_queryset(self):
-        user_id = not self.request.user.is_anonymous() and self.request.user.id
-        user_email = not self.request.user.is_anonymous() and self.request.user.email
+        user_id = not self.request.user.is_anonymous and self.request.user.id
+        user_email = not self.request.user.is_anonymous and self.request.user.email
         queryset = Channel.objects.filter(
             id__in=Channel.objects.filter(deleted=False)
             .filter(

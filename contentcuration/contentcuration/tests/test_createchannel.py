@@ -6,7 +6,7 @@ import json
 import requests
 from builtins import range
 from builtins import str
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 
 from .base import BaseTestCase
 from .testdata import create_studio_file

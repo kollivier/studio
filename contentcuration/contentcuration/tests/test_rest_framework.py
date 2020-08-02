@@ -3,7 +3,7 @@ from __future__ import absolute_import
 import json
 
 import pytest
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from le_utils.constants import content_kinds
 from le_utils.constants import exercises
 

@@ -188,7 +188,13 @@ class Command(BaseCommand):
                     obj, isNew = constant['model'].objects.update_or_create(**{constant['pk']: constant['fields'][constant['pk']]})
                     new_model_count += 1 if isNew else 0
                     for attr, value in list(constant['fields'].items()):
-                        setattr(obj, attr, value)
+                        try:
+                            setattr(obj, attr, value)
+                        except TypeError:
+                            # In Django 2.0+ we can't assign direclty to a ManyToMany relationship,
+                            # so we need to use .set() instead.
+                            obj_attr = getattr(obj, attr)
+                            obj_attr.set(value)
 
                     obj.save()
                 self.stdout.write("{0}: {1} constants saved ({2} new)".format(str(current_model), len(constant_list), new_model_count))

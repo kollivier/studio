@@ -4,8 +4,7 @@ import time
 import debug_panel.urls
 from debug_panel.cache import cache
 from debug_panel.middleware import DebugPanelMiddleware
-from django.core.urlresolvers import reverse
-
+from django.urls import reverse
 
 class CustomDebugPanelMiddleware(DebugPanelMiddleware):
     """

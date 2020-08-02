@@ -2,7 +2,7 @@ import json
 
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from django.shortcuts import redirect
 from django.shortcuts import render
 
@@ -50,7 +50,7 @@ def can_access_channel(function):
         if channel.public or \
                 channel.editors.filter(id=request.user.id).exists() or \
                 channel.viewers.filter(id=request.user.id).exists() or \
-                (not request.user.is_anonymous() and request.user.is_admin):
+                (not request.user.is_anonymous and request.user.is_admin):
             return function(request, *args, **kwargs)
 
         return render(request, 'channel_not_found.html', status=404)
@@ -79,7 +79,7 @@ def can_edit_channel(function):
 
 def has_accepted_policies(function):
     def wrap(request, *args, **kwargs):
-        if not request.user.is_authenticated():
+        if not request.user.is_authenticated:
             return function(request, *args, **kwargs)
 
         policies_to_accept = check_policies(request.user)

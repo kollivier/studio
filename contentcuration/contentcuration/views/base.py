@@ -8,7 +8,7 @@ from django.contrib.sites.shortcuts import get_current_site
 from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import PermissionDenied
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from django.db.models import Count
 from django.db.models import IntegerField
 from django.db.models import OuterRef
@@ -70,7 +70,7 @@ CURRENT_USER = "current_user"
 def base(request):
     if settings.LIBRARY_MODE:
         return channel_list(request)
-    elif request.user.is_authenticated():
+    elif request.user.is_authenticated:
         return redirect(reverse_lazy('channels'))
     else:
         return redirect(reverse_lazy('accounts'))
@@ -123,7 +123,7 @@ def get_or_set_cached_constants(constant, serializer):
 @has_accepted_policies
 @permission_classes((AllowAny,))
 def channel_list(request):
-    anon = settings.LIBRARY_MODE or request.user.is_anonymous()
+    anon = settings.LIBRARY_MODE or request.user.is_anonymous
     current_user = (
         None
         if anon

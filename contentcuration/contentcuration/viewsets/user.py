@@ -129,7 +129,7 @@ class UserViewSet(ValuesViewset):
     }
 
     def get_queryset(self):
-        assert not self.request.user.is_anonymous()
+        assert not self.request.user.is_anonymous
 
         if self.request.user.is_admin:
             queryset = User.objects.all()

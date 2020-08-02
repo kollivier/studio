@@ -92,7 +92,7 @@ class ChannelSetViewSet(ValuesViewset):
         queryset = queryset.annotate(
             channels=DistinctNotNullArrayAgg(
                 'secret_token__channels__id',
-                filter=Q(main_tree__published=True, deleted=False),
+                filter=Q(secret_token__channels__main_tree__published=True, secret_token__channels__deleted=False),
                 output_field=CharField()
             )
         )
