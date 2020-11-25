@@ -586,6 +586,7 @@ class Channel(models.Model):
     id = UUIDField(primary_key=True, default=uuid.uuid4)
     name = models.CharField(max_length=200, blank=True)
     description = models.CharField(max_length=400, blank=True)
+    tagline = models.CharField(max_length=150, blank=True, null=True)
     version = models.IntegerField(default=0)
     thumbnail = models.TextField(blank=True, null=True)
     thumbnail_encoding = JSONField(default=dict)
@@ -1453,16 +1454,6 @@ class File(models.Model):
                     raise ValueError("Files of type `{}` are not supported.".format(ext))
 
         super(File, self).save(*args, **kwargs)
-
-
-@receiver(models.signals.post_delete, sender=File)
-def auto_delete_file_on_delete(sender, instance, **kwargs):
-    """
-    Deletes file from filesystem if no other File objects are referencing the same file on disk
-    when corresponding `File` object is deleted.
-    Be careful! we don't know if this will work when perform bash delete on File obejcts.
-    """
-    delete_empty_file_reference(instance.checksum, instance.file_format.extension)
 
 
 def delete_empty_file_reference(checksum, extension):

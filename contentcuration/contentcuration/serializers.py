@@ -53,6 +53,22 @@ from contentcuration.statistics import record_node_addition_stats
 from contentcuration.utils.format import format_size
 
 
+def no_field_eval_repr(self):
+    """
+    DRF's default __repr__ implementation prints out all fields, and in the process
+    of that can evaluate querysets. If those querysets haven't yet had filters applied,
+    this will lead to full table scans, which are a big no-no if you like running servers.
+    """
+    return "{} object".format(self.__class__.__name__)
+
+
+# We have to monkey patch because DRF has some internal logic that returns a
+# ListSerializer object when a Serializer-derived object is requested if many=True.
+# Monkey-patching also means we don't have to worry about missing any serializers, tho. :)
+serializers.ListSerializer.__repr__ = no_field_eval_repr
+serializers.ModelSerializer.__repr__ = no_field_eval_repr
+
+
 class LicenseSerializer(serializers.ModelSerializer):
 
     class Meta:
@@ -226,42 +242,41 @@ class CustomListSerializer(serializers.ListSerializer):
             record_node_addition_stats(update_nodes, ContentNode.objects.get(id=update_nodes.itervalues().next()['id']),
                                        self.context['request'].user.id)
             with transaction.atomic():
-                with ContentNode.objects.delay_mptt_updates():
-                    for node_id, data in update_nodes.items():
-                        node, is_new = ContentNode.objects.get_or_create(pk=node_id)
+                for node_id, data in update_nodes.items():
+                    node, is_new = ContentNode.objects.get_or_create(pk=node_id)
 
-                        taglist = []
-                        for tag_data in tag_mapping.get(node_id, None):
-                            # when deleting nodes, tag_data is a dict, but when adding nodes, it's a unicode string
-                            if isinstance(tag_data, unicode):
-                                tag_data = json.loads(tag_data)
+                    taglist = []
+                    for tag_data in tag_mapping.get(node_id, None):
+                        # when deleting nodes, tag_data is a dict, but when adding nodes, it's a unicode string
+                        if isinstance(tag_data, unicode):
+                            tag_data = json.loads(tag_data)
 
-                            # this requires optimization
-                            for tag_itm in all_tags:
-                                if tag_itm.tag_name == tag_data['tag_name'] \
-                                        and tag_itm.channel_id == tag_data['channel']:
-                                    taglist.append(tag_itm)
+                        # this requires optimization
+                        for tag_itm in all_tags:
+                            if tag_itm.tag_name == tag_data['tag_name'] \
+                                    and tag_itm.channel_id == tag_data['channel']:
+                                taglist.append(tag_itm)
 
-                        # Detect if model has been moved to a different tree
-                        if node.pk is not None:
-                            original = ContentNode.objects.get(pk=node.pk)
-                            if original.parent_id and original.parent_id != node.parent_id:
-                                original_parent = ContentNode.objects.get(pk=original.parent_id)
-                                original_parent.changed = True
-                                original_parent.save()
+                    # Detect if model has been moved to a different tree
+                    if node.pk is not None:
+                        original = ContentNode.objects.get(pk=node.pk)
+                        if original.parent_id and original.parent_id != node.parent_id:
+                            original_parent = ContentNode.objects.get(pk=original.parent_id)
+                            original_parent.changed = True
+                            original_parent.save()
 
-                        # potential optimization opportunity
-                        for attr, value in data.items():
-                            setattr(node, attr, value)
-                        node.tags = taglist
+                    # potential optimization opportunity
+                    for attr, value in data.items():
+                        setattr(node, attr, value)
+                    node.tags = taglist
 
-                        node.save(request=self.context['request'])
+                    node.save(request=self.context['request'])
 
-                        PrerequisiteContentRelationship.objects.filter(target_node_id=node_id).delete()
-                        for prereq_node in prerequisite_mapping.get(node_id) or []:
-                            PrerequisiteContentRelationship.objects.get_or_create(target_node_id=node_id, prerequisite_id=prereq_node.id)
-                        node.save(request=self.context['request'])
-                        ret.append(node)
+                    PrerequisiteContentRelationship.objects.filter(target_node_id=node_id).delete()
+                    for prereq_node in prerequisite_mapping.get(node_id) or []:
+                        PrerequisiteContentRelationship.objects.get_or_create(target_node_id=node_id, prerequisite_id=prereq_node.id)
+                    node.save(request=self.context['request'])
+                    ret.append(node)
         return ret
 
     def to_representation(self, data):
@@ -763,7 +778,8 @@ class ChannelSerializer(ChannelFieldMixin, serializers.ModelSerializer):
             'id', 'created', 'updated', 'name', 'description', 'has_changed', 'editors', 'main_tree', 'trash_tree',
             'staging_tree', 'source_id', 'source_domain', 'ricecooker_version', 'thumbnail', 'version', 'deleted',
             'public', 'thumbnail_url', 'thumbnail_encoding', 'pending_editors', 'viewers', 'tags', 'content_defaults',
-            'language', 'primary_token', 'priority', 'published_size', 'published_data', 'source_url', 'demo_server_url')
+            'language', 'primary_token', 'priority', 'published_size', 'published_data', 'source_url', 'demo_server_url',
+            'tagline')
         read_only_fields = ('id', 'version')
 
 

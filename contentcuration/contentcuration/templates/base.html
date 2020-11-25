@@ -95,22 +95,33 @@
         <title>Kolibri Studio ({% trans 'Beta' %})</title>
       {% endblock head %}
 
-      {% block analytics %}
-        {% cache 60 analytics_block %}
-        {% if not debug %}
-          <!-- Global site tag (gtag.js) - Google Analytics -->
-          <script async src="https://www.googletagmanager.com/gtag/js?id=UA-36937407-7"></script>
-          <script>
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){dataLayer.push(arguments);}
-            gtag('js', new Date());
+      {% block analytics_data_layer %}
+        <script>
+          // Google tag manager data layer https://developers.google.com/tag-manager/devguide
+          dataLayer = [{
+            studioVersion: 'v1',
+            currentUser: JSON.parse("{{ current_user|escapejs }}"),
+          }];
+        </script>
+      {% endblock analytics_data_layer %}
 
-            gtag('config', 'UA-36937407-7');
-          </script>
-        {% endif %}
-        {% endcache %}
+      {% block analytics %}
+        <script>
+          // Backwards compatible
+          function gtag(){dataLayer.push(arguments);}
+        </script>
+        <!-- Google Tag Manager -->
+        <script>
+          (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+          new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+          j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+          'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+          })(window,document,'script','dataLayer','GTM-M6TP6S5');
+        </script>
+        <!-- End Google Tag Manager -->
       {% endblock %}
-	</head>
+      {% block style %}{% endblock style %}
+  </head>
   <body data-app>
       {% block nav %}
       <!-- Navigation bar -->
@@ -150,8 +161,9 @@
         <i class="material-icons">error</i> {% blocktrans %}Contentworkshop.learningequality.org has been deprecated. Please go to <a href="https://studio.learningequality.org">studio.learningequality.org</a> for the latest version of Studio{% endblocktrans %}
       </div>
     {% elif BETA_MODE %}
+
       <div id="beta-banner" class="text-center info-banner main-banner">
-        <i class="material-icons">build</i> {% url 'issues_settings' as issue_url %}{% blocktrans %}Kolibri Studio is undergoing active development, and during usage you may encounter unexpected behavior or problems. <a href="{{issue_url}}" target="_blank">Please read here</a> on best practices, known issues, and error reporting recommendations. We appreciate your patience and assistance as we work to improve the Kolibri Studio Beta!{% endblocktrans %}
+        <i class="material-icons">card_giftcard</i> {% url 'updates' as update_url %}{% blocktrans %}Kolibri Studio is getting a makeover. <a href="{{update_url}}" target="_blank">Learn more about our exciting updates!</a>{% endblocktrans %}
       </div>
     {% endif %}
     {% endblock nav %}

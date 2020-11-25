@@ -59,6 +59,11 @@ from contentcuration.models import Task
 from contentcuration.models import User
 
 
+# More fixes to prevent querysets from evaluating during string conversion.
+viewsets.ModelViewSet.__repr__ = serializers.no_field_eval_repr
+BulkModelViewSet.__repr__ = serializers.no_field_eval_repr
+
+
 def get_channel_tree_ids(user):
     channels = Channel.objects.select_related('trash_tree').select_related('main_tree').filter(Q(editors=user) | Q(viewers=user) | Q(public=True))
     trash_tree_ids = channels.values_list('trash_tree__tree_id', flat=True).distinct()
@@ -287,6 +292,7 @@ urlpatterns = [
     url(r'^api/set_channel_priority/$', views.set_channel_priority, name='set_channel_priority'),
     url(r'^api/download_channel_content_csv/(?P<channel_id>[^/]{32})$', views.download_channel_content_csv, name='download_channel_content_csv'),
     url(r'^api/probers/get_prober_channel', views.get_prober_channel, name='get_prober_channel'),
+    url(r'^updates$', views.updates, name='updates'),
 ]
 
 # if activated, turn on django prometheus urls
